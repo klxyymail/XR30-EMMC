@@ -76,6 +76,15 @@ jobs:
         restore-keys: |
           ${{ env.SOURCE_NAME }}-toolchain-cache
 
+    - name: Validate toolchain cache
+      run: |
+        cd $SOURCE_NAME
+        if [ -d staging_dir ] && ! find staging_dir -path '*/toolchain-*/lib/libgcc_s.so.*' | grep -q .; then
+          echo "::warning::Restored toolchain cache is incomplete; rebuilding toolchain only."
+          rm -rf staging_dir/toolchain-* build_dir/toolchain-* build_dir/target-*/toolchain
+          rm -f staging_dir/target-*/pkginfo/toolchain.* staging_dir/target-*/stamp/.toolchain_installed
+        fi
+
     - name: Patch feeds
       run: |
         set -x
