@@ -125,6 +125,10 @@ jobs:
           rm -rf staging_dir/toolchain-* build_dir/toolchain-* build_dir/target-*/toolchain
           rm -f staging_dir/target-*/pkginfo/toolchain.* staging_dir/target-*/stamp/.toolchain_installed
         fi
+        if [ -d dl/go-mod-cache ]; then
+          echo "::warning::Dropping restored Go module cache; it can be left incomplete by failed daed builds."
+          rm -rf dl/go-mod-cache
+        fi
             
     - name: patch修补
       run: |
@@ -177,7 +181,7 @@ jobs:
         cd $SOURCE_NAME
         trap 'echo "::group::BPF checkpoint diagnostics"; find staging_dir -maxdepth 4 \( -path "*/toolchain-*" -o -name "libgcc_s.so*" -o -name "*.toolchain*" \) -print 2>/dev/null || true; find build_dir -maxdepth 3 \( -path "*/toolchain*" -o -path "*/bpf-headers*" \) -print 2>/dev/null || true; echo "::endgroup::"' ERR
         clang --version || true
-        grep -E 'CONFIG_(BPF_TOOLCHAIN|USE_LLVM|HAS_BPF|SDK_LLVM|KERNEL_DEBUG_INFO|KERNEL_BPF|KERNEL_CGROUP_BPF|KERNEL_XDP|DAE.*BTF)' .config || true
+        grep -E 'CONFIG_(BPF_TOOLCHAIN|USE_LLVM|HAS_BPF|SDK_LLVM|KERNEL_DEBUG_INFO|KERNEL_BPF|KERNEL_CGROUP_BPF|KERNEL_XDP|DAE.*BTF|DAE.*BPF_DEPENDS)' .config || true
         make tools/install -j$(nproc) || make tools/install -j1 V=s
         make target/compile -j$(nproc) || make target/compile -j1 V=s
         make package/kernel/bpf-headers/compile V=s
@@ -188,6 +192,12 @@ jobs:
         cd $SOURCE_NAME
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
+
+    - name: Clean volatile Go module cache
+      if: always()
+      run: |
+        cd $SOURCE_NAME
+        rm -rf dl/go-mod-cache
 
     - name: Save build cache
       if: always()
