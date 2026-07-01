@@ -104,13 +104,18 @@ jobs:
         echo "release_tag=$_release_tag" >> $GITHUB_ENV  
         
     - name: 取回缓存 staging_dir
-      uses: actions/cache@v5
+      id: build-cache
+      uses: actions/cache/restore@v5
       with:
         path: |
+          ${{ matrix.source }}/dl
           ${{ matrix.source }}/staging_dir
-        key: ${{ matrix.source }}-toolchain-cache
+          ${{ matrix.source }}/build_dir/host
+          ${{ matrix.source }}/build_dir/hostpkg
+          ${{ matrix.source }}/build_dir/toolchain-*
+        key: ${{ matrix.source }}-${{ matrix.device }}-build-cache-${{ github.run_id }}
         restore-keys: |
-          ${{ matrix.source }}-toolchain-cache
+          ${{ matrix.source }}-${{ matrix.device }}-build-cache-
             
     - name: patch修补
       run: |
@@ -157,6 +162,14 @@ jobs:
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
+
+    - name: BPF/LLVM early checkpoint
+      run: |
+        cd $SOURCE_NAME
+        grep -E 'CONFIG_(BPF_TOOLCHAIN|USE_LLVM|HAS_BPF|SDK_LLVM|KERNEL_DEBUG_INFO|KERNEL_BPF|KERNEL_CGROUP_BPF|KERNEL_XDP)' .config || true
+        make tools/install -j$(nproc) || make tools/install -j1 V=s
+        make toolchain/install -j$(nproc) || make toolchain/install -j1 V=s
+        make package/kernel/bpf-headers/compile V=s
     
     - name: 编译源码
       id: compile
@@ -164,6 +177,18 @@ jobs:
         cd $SOURCE_NAME
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || make -j1 || make -j1 V=s
+
+    - name: Save build cache
+      if: always()
+      uses: actions/cache/save@v5
+      with:
+        path: |
+          ${{ matrix.source }}/dl
+          ${{ matrix.source }}/staging_dir
+          ${{ matrix.source }}/build_dir/host
+          ${{ matrix.source }}/build_dir/hostpkg
+          ${{ matrix.source }}/build_dir/toolchain-*
+        key: ${{ matrix.source }}-${{ matrix.device }}-build-cache-${{ github.run_id }}
 
     - name: 查看磁盘使用情况
       if: (!cancelled())
