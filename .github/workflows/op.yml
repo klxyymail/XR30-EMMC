@@ -12,7 +12,7 @@ on:
       OP_author:
         description: '定制作者'     
         required: false
-        default: 'shiyu1314' 
+        default: 'kubulama' 
         type: string    
       CUSTOM_PLUGINS:
         description: '自定义插件名称，用空格分隔'
