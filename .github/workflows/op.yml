@@ -20,6 +20,9 @@ on:
         default: 'luci-app-zerotier luci-app-socat luci-app-samba4 luci-theme-m3e luci-app-ttyd luci-app-diskman luci-app-daed luci-i18n-daed-zh-cn'
         type: string
 
+permissions:
+  contents: write
+
 env:
   DIY_P1_SH: sh/op.sh
 
