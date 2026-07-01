@@ -33,11 +33,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: ["xr30-emmc"]
+        device: ["jcg-q30-pro"]
         source: ["openwrt"]
         include:
-          - device: "xr30-emmc"
-            config: "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_xr30-emmc=y"
+          - device: "jcg-q30-pro"
+            config: "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_jcg_q30-pro=y"
 
     steps: 
     - name: 检查分支
