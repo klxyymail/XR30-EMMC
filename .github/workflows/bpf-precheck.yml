@@ -1,0 +1,126 @@
+name: bpf-precheck
+
+on:
+  workflow_dispatch:
+
+env:
+  DIY_P1_SH: sh/op.sh
+  SOURCE_NAME: openwrt
+  REPO_URL: https://github.com/shiyu1314/openwrt-source
+  REPO_BRANCH: openwrt-25.12
+  XR30_CONFIG: CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_xr30-emmc=y
+
+jobs:
+  bpf_headers:
+    name: XR30 EMMC bpf-headers
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+
+    - name: Free disk space
+      run: |
+        sudo rm -rf /etc/apt/sources.list.d
+        sudo swapoff -a
+        sudo rm -f /swapfile /mnt/swapfile
+        sudo docker image prune -a -f
+        sudo systemctl stop docker
+        sudo snap set system refresh.retain=2
+        sudo apt-get -y purge firefox google* mono* mongo* mysql* php*
+        sudo apt-get -y autoremove --purge
+        sudo apt-get clean
+        sudo rm -rf /etc/mysql /etc/php /usr/lib/jvm /usr/libexec/docker /usr/local /usr/src/* /var/lib/docker /var/lib/gems /var/lib/mysql /var/lib/snapd /etc/skel /opt/{microsoft,az,hostedtoolcache,cni,mssql-tools,pipx} /usr/share/{az*,dotnet,swift,miniconda,gradle*,java,kotlinc,ri,sbt} /root/{.sbt,.local,.npm}
+        rm -rf ~/{.cargo,.dotnet,.rustup}
+        df -Th
+
+    - name: Build environment
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y tar build-essential flex bison cmake g++ gawk gcc-multilib g++-multilib gettext git libfuse-dev libncurses5-dev libssl-dev python3 python3-pip python3-ply python3-distutils python3-pyelftools rsync unzip zlib1g-dev file wget subversion patch upx-ucl autoconf automake curl asciidoc binutils bzip2 lib32gcc-s1 libc6-dev-i386 uglifyjs msmtp texinfo libreadline-dev libglib2.0-dev xmlto libelf-dev libtool autopoint antlr3 gperf ccache swig coreutils haveged scons libpython3-dev rename qemu-utils
+        sudo apt-get clean
+        git config --global user.name 'GitHub Actions'
+        git config --global user.email 'noreply@github.com'
+        sudo timedatectl set-timezone 'Asia/Shanghai'
+        sudo mkdir -p /workdir
+        sudo chown $USER:$GROUPS /workdir
+
+    - name: Clone source
+      working-directory: /workdir
+      run: |
+        git clone $REPO_URL $SOURCE_NAME
+        ln -sf /workdir/$SOURCE_NAME $GITHUB_WORKSPACE/$SOURCE_NAME
+
+    - name: Checkout release tag
+      run: |
+        cd $SOURCE_NAME
+        case $REPO_BRANCH in
+          openwrt-25.12)
+            _release_tag=$(git tag --sort=taggerdate --list 'v25.*' | tail -1)
+            git checkout $_release_tag
+            ;;
+          *)
+            echo "Can't get local/upstream's branch/tags"
+            exit 1
+            ;;
+        esac
+
+    - name: Restore staging cache
+      uses: actions/cache@v5
+      with:
+        path: |
+          ${{ env.SOURCE_NAME }}/staging_dir
+        key: ${{ env.SOURCE_NAME }}-toolchain-cache
+        restore-keys: |
+          ${{ env.SOURCE_NAME }}-toolchain-cache
+
+    - name: Patch feeds
+      run: |
+        set -x
+        cd $SOURCE_NAME
+        [ -d ./staging_dir ] && find ./staging_dir/ -name '*' -exec touch {} \; >/dev/null 2>&1 || true
+        ./scripts/feeds update -a
+        cd ..
+        [ -e patch ] && cp -rf patch/diy/*.patch $SOURCE_NAME
+        [ -e patch ] && cp -rf patch/luci/*.patch $SOURCE_NAME/feeds/luci
+
+    - name: Apply custom script
+      run: |
+        chmod +x $DIY_P1_SH
+        cd $SOURCE_NAME
+        $GITHUB_WORKSPACE/$DIY_P1_SH
+        cd ..
+        [ -e patch ] && cp -rf patch/nginx/luci.locations $SOURCE_NAME/feeds/packages/net/nginx/files-luci-support
+        [ -e patch ] && cp -rf patch/nginx/uci.conf.template $SOURCE_NAME/feeds/packages/net/nginx-util/files
+
+    - name: Load XR30 config
+      run: |
+        [ -e files ] && mv files $SOURCE_NAME/files
+        cat <<EOF >>$SOURCE_NAME/.config
+        CONFIG_TARGET_mediatek=y
+        CONFIG_TARGET_mediatek_filogic=y
+        $XR30_CONFIG
+        EOF
+        [ -e config ] && cat config/config-common >> $SOURCE_NAME/.config
+        for plugin in luci-app-zerotier luci-app-socat luci-app-samba4 luci-theme-m3e luci-app-ttyd luci-app-diskman luci-app-daed luci-i18n-daed-zh-cn; do
+          echo "CONFIG_PACKAGE_${plugin}=y" >> $SOURCE_NAME/.config
+        done
+
+    - name: BPF headers precheck
+      run: |
+        cd $SOURCE_NAME
+        make defconfig
+        grep -E 'CONFIG_(BPF_TOOLCHAIN|USE_LLVM|HAS_BPF|SDK_LLVM|KERNEL_DEBUG_INFO|KERNEL_BPF|KERNEL_CGROUP_BPF|KERNEL_XDP)' .config || true
+        make package/kernel/bpf-headers/compile V=s
+
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: bpf-precheck-logs
+        path: |
+          ${{ env.SOURCE_NAME }}/logs
+          ${{ env.SOURCE_NAME }}/.config
+        if-no-files-found: ignore
