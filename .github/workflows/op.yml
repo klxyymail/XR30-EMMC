@@ -33,10 +33,6 @@ jobs:
         device: ["xr30-emmc"]
         source: ["openwrt"]
         include:
-          - device: "jcg_q30-pro"
-            config: "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_jcg_q30-pro=y"
-          - device: "rax3000m-emmc"
-            config: "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m-emmc=y"
           - device: "xr30-emmc"
             config: "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_xr30-emmc=y"
 
