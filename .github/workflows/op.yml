@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: ["jcg_q30-pro", "rax3000m-emmc", "xr30-emmc"]
+        device: ["xr30-emmc"]
         source: ["openwrt"]
         include:
           - device: "jcg_q30-pro"
