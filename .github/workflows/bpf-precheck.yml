@@ -113,6 +113,7 @@ jobs:
         cd $SOURCE_NAME
         make defconfig
         grep -E 'CONFIG_(BPF_TOOLCHAIN|USE_LLVM|HAS_BPF|SDK_LLVM|KERNEL_DEBUG_INFO|KERNEL_BPF|KERNEL_CGROUP_BPF|KERNEL_XDP)' .config || true
+        make tools/install -j$(nproc) || make tools/install -j1 V=s
         make package/kernel/bpf-headers/compile V=s
 
     - name: Upload logs
