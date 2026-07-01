@@ -28,6 +28,7 @@ jobs:
     name: 编译固件 - ${{ matrix.device }} - ${{ matrix.source }}
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         device: ["jcg_q30-pro", "rax3000m-emmc", "xr30-emmc"]
         source: ["openwrt"]

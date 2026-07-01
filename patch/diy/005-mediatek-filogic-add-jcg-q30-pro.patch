@@ -8,7 +8,6 @@ Subject: [PATCH] mediatek: filogic: add JCG Q30 PRO image profile
  1 file changed, 24 insertions(+)
 
 diff --git a/target/linux/mediatek/image/filogic.mk b/target/linux/mediatek/image/filogic.mk
-index 0000000000..0000000000 100644
 --- a/target/linux/mediatek/image/filogic.mk
 +++ b/target/linux/mediatek/image/filogic.mk
 @@ -258,6 +258,30 @@ define Device/cmcc_xr30-nand
