@@ -18,6 +18,17 @@ grep HASH target/linux/generic/kernel-6.12 | awk -F'HASH-' '{print $2}' | awk '{
 git clone -b packages --depth 1 --single-branch https://github.com/shiyu1314/openwrt-feeds package/xd
 git clone -b porxy --depth 1 --single-branch https://github.com/shiyu1314/openwrt-feeds package/porxy
 
+# Use QiuSimons' newer daed/luci-app-daed packages while keeping package names
+# compatible with the existing luci-app-daed selection.
+rm -rf package/porxy/daed package/porxy/luci-app-daed
+rm -rf qiu-luci-app-daed
+git clone --depth=1 -b kix --single-branch --filter=blob:none --sparse https://github.com/QiuSimons/luci-app-daed qiu-luci-app-daed
+pushd qiu-luci-app-daed || exit 1
+git sparse-checkout set daed luci-app-daed
+popd
+mv -f qiu-luci-app-daed/daed qiu-luci-app-daed/luci-app-daed package/porxy/
+rm -rf qiu-luci-app-daed
+
 rm -rf feeds/luci/applications/{luci-app-dockerman,luci-app-samba4,luci-app-aria2,luci-app-diskman}
 rm -rf feeds/packages/net/{samba4,v2ray-geodata,mosdns,sing-box,aria2,ariang,adguardhome}
 

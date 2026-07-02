@@ -33,11 +33,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        device: ["jcg-q30-pro"]
+        device: ["mt7981-multi"]
         source: ["openwrt"]
         include:
-          - device: "jcg-q30-pro"
-            config: "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_jcg_q30-pro=y"
+          - device: "mt7981-multi"
+            config: |
+              CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m=y
+              CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m-emmc=y
+              CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m-nand=y
+              CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m-256m-nand=y
+              CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_xr30-emmc=y
+              CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_xr30-nand=y
+              CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_jcg_q30-pro=y
 
     steps: 
     - name: 检查分支
@@ -121,6 +128,11 @@ jobs:
         key: ${{ matrix.source }}-${{ matrix.device }}-build-cache-${{ github.run_id }}
         restore-keys: |
           ${{ matrix.source }}-${{ matrix.device }}-build-cache-
+          ${{ matrix.source }}-jcg-q30-pro-build-cache-
+          ${{ matrix.source }}-xr30-emmc-build-cache-
+          ${{ matrix.source }}-xr30-nand-build-cache-
+          ${{ matrix.source }}-rax3000m-emmc-build-cache-
+          ${{ matrix.source }}-rax3000m-nand-build-cache-
 
     - name: Validate toolchain cache
       run: |
