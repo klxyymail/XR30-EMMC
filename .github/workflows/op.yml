@@ -116,6 +116,8 @@ jobs:
           ${{ matrix.source }}/build_dir/host
           ${{ matrix.source }}/build_dir/hostpkg
           ${{ matrix.source }}/build_dir/toolchain-*
+          ${{ matrix.source }}/bin/packages
+          ${{ matrix.source }}/bin/targets
         key: ${{ matrix.source }}-${{ matrix.device }}-build-cache-${{ github.run_id }}
         restore-keys: |
           ${{ matrix.source }}-${{ matrix.device }}-build-cache-
@@ -213,6 +215,8 @@ jobs:
           ${{ matrix.source }}/build_dir/host
           ${{ matrix.source }}/build_dir/hostpkg
           ${{ matrix.source }}/build_dir/toolchain-*
+          ${{ matrix.source }}/bin/packages
+          ${{ matrix.source }}/bin/targets
         key: ${{ matrix.source }}-${{ matrix.device }}-build-cache-${{ github.run_id }}
 
     - name: 查看磁盘使用情况
