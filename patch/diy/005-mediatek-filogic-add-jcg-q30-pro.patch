@@ -4,13 +4,13 @@ Date: Wed, 1 Jul 2026 11:30:00 +0800
 Subject: [PATCH] mediatek: filogic: add JCG Q30 PRO image profile
 
 ---
- target/linux/mediatek/image/filogic.mk | 24 ++++++++++++++++++++++++
- 1 file changed, 24 insertions(+)
+ target/linux/mediatek/image/filogic.mk | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
 
 diff --git a/target/linux/mediatek/image/filogic.mk b/target/linux/mediatek/image/filogic.mk
 --- a/target/linux/mediatek/image/filogic.mk
 +++ b/target/linux/mediatek/image/filogic.mk
-@@ -258,6 +258,43 @@ define Device/cmcc_xr30-nand
+@@ -258,6 +258,40 @@ define Device/cmcc_xr30-nand
  endef
  TARGET_DEVICES += cmcc_xr30-nand
  
@@ -51,5 +51,3 @@ diff --git a/target/linux/mediatek/image/filogic.mk b/target/linux/mediatek/imag
  define Device/openwrt_one
    DEVICE_VENDOR := OpenWrt
    DEVICE_MODEL := One
--- 
-2.42.0

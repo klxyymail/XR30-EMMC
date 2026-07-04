@@ -61,13 +61,63 @@ for patch in *.patch; do
 done
 popd
 
+filogic_mk="target/linux/mediatek/image/filogic.mk"
+if ! grep -q "Device/jcg_q30-pro" "$filogic_mk"; then
+    awk '
+        /define Device\/openwrt_one/ && !inserted {
+            print ""
+            print "define Build/jcg-q30-pro-sysupgrade-bin"
+            print "\tsh $(TOPDIR)/scripts/sysupgrade-tar.sh \\"
+            print "\t\t--board $(if $(BOARD_NAME),$(BOARD_NAME),$(DEVICE_NAME)) \\"
+            print "\t\t--kernel $@ \\"
+            print "\t\t--rootfs $(IMAGE_ROOTFS) \\"
+            print "\t\t$@.tar"
+            print "\tmv $@.tar $@"
+            print "endef"
+            print ""
+            print "define Device/jcg_q30-pro"
+            print "  DEVICE_VENDOR := JCG"
+            print "  DEVICE_MODEL := Q30 PRO"
+            print "  DEVICE_DTS := mt7981b-jcg-q30-pro"
+            print "  DEVICE_DTS_DIR := ../dts"
+            print "  UBINIZE_OPTS := -E 5"
+            print "  BLOCKSIZE := 128k"
+            print "  PAGESIZE := 2048"
+            print "  KERNEL_IN_UBI := 1"
+            print "  UBOOTENV_IN_UBI := 1"
+            print "  IMAGES := sysupgrade.bin sysupgrade.itb"
+            print "  KERNEL := kernel-bin | gzip | \\"
+            print "\tpad-to 64k"
+            print "  IMAGE/sysupgrade.bin := append-kernel | \\"
+            print "\tfit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb | \\"
+            print "\tjcg-q30-pro-sysupgrade-bin | append-metadata"
+            print "  IMAGE/sysupgrade.itb := append-kernel | \\"
+            print "\tfit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | append-metadata"
+            print "  DEVICE_PACKAGES :="
+            print "  ARTIFACTS := preloader.bin bl31-uboot.fip"
+            print "  ARTIFACT/preloader.bin := mt7981-bl2 spim-nand-ddr3"
+            print "  ARTIFACT/bl31-uboot.fip := mt7981-bl31-uboot jcg_q30-pro"
+            print "endef"
+            print "TARGET_DEVICES += jcg_q30-pro"
+            print ""
+            inserted = 1
+        }
+        { print }
+    ' "$filogic_mk" > "$filogic_mk.tmp"
+    mv "$filogic_mk.tmp" "$filogic_mk"
+fi
+
 for patch in *.patch; do
     [ -f "$patch" ] || continue
+
+    if [ "$patch" = "005-mediatek-filogic-add-jcg-q30-pro.patch" ]; then
+        echo "Skipping $patch: JCG Q30 PRO profile is managed by sh/op.sh"
+        continue
+    fi
     
     echo "Applying $patch ..."
     patch -p1 --no-backup-if-mismatch < "$patch" || {
         echo "ERROR: Failed to apply $patch"
-        popd
         exit 1
     }
 done
