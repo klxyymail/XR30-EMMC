@@ -1,12 +1,12 @@
 # RAX3000M OpenWrt  闭源驱动固件
 
-## 📋 支持的设备，编译未测试
-- ✅ **RAX3000M EMMC 版**
+## 📋 支持的设备
+- ✅ **RAX3000M EMMC 版** （已测试）
 - ✅ **RAX3000M NAND **
 - ✅ **RAX3000M 256M NAND**
-- ✅ **XR30 EMMC 版**
+- ✅ **XR30 EMMC 版**  （已测试）
 - ✅ **XR30 NAND 版**
-- ✅ **JCG Q30 PRO**
+- ✅ **JCG Q30 PRO**  （已测试）
 
 ## ⚡ 核心特性
 - **自建源支持**
