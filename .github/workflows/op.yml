@@ -264,10 +264,3 @@ jobs:
           定制作者：${{ github.event.inputs.OP_author }}
           默认密码：无
 
-    - name: 清理Releases
-      uses: gzk47/delete-older-releases@v0.3.5
-      with:
-        keep_latest: 1
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
