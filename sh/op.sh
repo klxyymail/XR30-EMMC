@@ -21,7 +21,11 @@ git clone -b porxy --depth 1 --single-branch https://github.com/shiyu1314/openwr
 # The smartdns feed can reference a rust-bindgen/host helper that is not present
 # in this source tree. It is only a stale build dependency here, but removing it
 # keeps compile logs clean and avoids confusing warnings.
-[ -f package/xd/smartdns/Makefile ] && sed -i 's/ *rust-bindgen\/host//g' package/xd/smartdns/Makefile
+[ -f package/xd/smartdns/Makefile ] && sed -i -E \
+  -e 's/[[:space:]]*PACKAGE_smartdns-ui:rust-bindgen\/host//g' \
+  -e 's/[[:space:]]*rust-bindgen\/host//g' \
+  -e 's/[[:space:]]*PACKAGE_smartdns-ui://g' \
+  package/xd/smartdns/Makefile
 
 # Use QiuSimons' newer daed/luci-app-daed packages while keeping package names
 # compatible with the existing luci-app-daed selection.
@@ -37,7 +41,7 @@ rm -rf qiu-luci-app-daed
 # Upstream daed may silently continue when the web UI build does not produce
 # embeddable files, and then fail later in dae-wing's go:embed step. Build the
 # web app by workspace path and verify the generated assets before compiling Go.
-perl -0777 -i -pe 's#pnpm build --filter daed ; \\\r?\n\s*popd ; \\\r?\n\s*mkdir -p \$\(PKG_BUILD_DIR\)/webrender/web ; \\\r?\n\s*cp -rf \$\(DAED_BUILD_DIR\)/apps/web/dist/\* \$\(PKG_BUILD_DIR\)/webrender/web ;#pnpm --filter ./apps/web build ; \\\n\tpopd ; \\\n\ttest -s $(DAED_BUILD_DIR)/apps/web/dist/index.html || { echo "ERROR: daed web assets were not generated"; find $(DAED_BUILD_DIR)/apps -maxdepth 4 -type f | sort | tail -200; exit 1; } ; \\\n\tmkdir -p $(PKG_BUILD_DIR)/webrender/web ; \\\n\tcp -rf $(DAED_BUILD_DIR)/apps/web/dist/. $(PKG_BUILD_DIR)/webrender/web ; \\\n\tfind $(PKG_BUILD_DIR)/webrender/web -type f -print -quit | grep -q . || { echo "ERROR: dae-wing webrender/web is empty"; exit 1; } ;#s' package/porxy/daed/Makefile
+perl -0777 -i -pe 's#pnpm build --filter daed ; \\\r?\n\s*popd ; \\\r?\n\s*mkdir -p \$\(PKG_BUILD_DIR\)/webrender/web ; \\\r?\n\s*cp -rf \$\(DAED_BUILD_DIR\)/apps/web/dist/\* \$\(PKG_BUILD_DIR\)/webrender/web ;#pnpm --filter ./apps/web build ; \\\n\tpopd ; \\\n\ttest -s \$(DAED_BUILD_DIR)/apps/web/dist/index.html || { echo "ERROR: daed web assets were not generated"; find \$(DAED_BUILD_DIR)/apps -maxdepth 4 -type f | sort | tail -200; exit 1; } ; \\\n\tmkdir -p \$(PKG_BUILD_DIR)/webrender/web ; \\\n\tcp -rf \$(DAED_BUILD_DIR)/apps/web/dist/. \$(PKG_BUILD_DIR)/webrender/web ; \\\n\tfind \$(PKG_BUILD_DIR)/webrender/web -type f -print -quit | grep -q . || { echo "ERROR: dae-wing webrender/web is empty"; exit 1; } ;#s' package/porxy/daed/Makefile
 grep -q 'pnpm --filter ./apps/web build' package/porxy/daed/Makefile || {
   echo "ERROR: failed to patch daed web build command"
   exit 1
