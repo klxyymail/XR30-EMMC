@@ -169,6 +169,10 @@ jobs:
     - name: 加载自定义配置
       run: |
         [ -e files ] && mv files $SOURCE_NAME/files
+        mkdir -p $SOURCE_NAME/files/usr/share/daed-runfiles
+        wget -qO $SOURCE_NAME/files/usr/share/daed-runfiles/25-luci-app-dead_1.28-aarch64_cortex-a53.run \
+          https://github.com/wkccd/luci-app-daed-runfiles/releases/download/v1.28.0/25-luci-app-dead_1.28-aarch64_cortex-a53.run
+        chmod 0644 $SOURCE_NAME/files/usr/share/daed-runfiles/25-luci-app-dead_1.28-aarch64_cortex-a53.run
         cat <<EOF >>$SOURCE_NAME/.config
         CONFIG_TARGET_mediatek=y
         CONFIG_TARGET_mediatek_filogic=y
@@ -181,6 +185,11 @@ jobs:
         
         IFS=' ' read -r -a plugins <<< "${{ github.event.inputs.CUSTOM_PLUGINS }}"
         for plugin in "${plugins[@]}"; do
+          case "$plugin" in
+            luci-app-daed|luci-i18n-daed-zh-cn)
+              continue
+              ;;
+          esac
           echo "CONFIG_PACKAGE_${plugin}=y" >> $SOURCE_NAME/.config
         done
     

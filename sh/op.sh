@@ -27,25 +27,10 @@ git clone -b porxy --depth 1 --single-branch https://github.com/shiyu1314/openwr
   -e 's/[[:space:]]*PACKAGE_smartdns-ui://g' \
   package/xd/smartdns/Makefile
 
-# Use QiuSimons' newer daed/luci-app-daed packages while keeping package names
-# compatible with the existing luci-app-daed selection.
+# daed 1.28.x pulls a large pnpm/turbo frontend and has repeatedly failed in
+# GitHub Actions. Install the official OpenWrt 25.12 runfiles at first boot
+# instead of compiling the source packages during firmware build.
 rm -rf package/porxy/daed package/porxy/luci-app-daed
-rm -rf qiu-luci-app-daed
-git clone --depth=1 -b kix --single-branch --filter=blob:none --sparse https://github.com/QiuSimons/luci-app-daed qiu-luci-app-daed
-pushd qiu-luci-app-daed || exit 1
-git sparse-checkout set daed luci-app-daed
-popd
-mv -f qiu-luci-app-daed/daed qiu-luci-app-daed/luci-app-daed package/porxy/
-rm -rf qiu-luci-app-daed
-
-# Upstream daed may silently continue when the web UI build does not produce
-# embeddable files, and then fail later in dae-wing's go:embed step. Build the
-# web app by workspace path and verify the generated assets before compiling Go.
-perl -0777 -i -pe 's#pnpm build --filter daed ; \\\r?\n\s*popd ; \\\r?\n\s*mkdir -p \$\(PKG_BUILD_DIR\)/webrender/web ; \\\r?\n\s*cp -rf \$\(DAED_BUILD_DIR\)/apps/web/dist/\* \$\(PKG_BUILD_DIR\)/webrender/web ;#pnpm --filter ./apps/web build ; \\\n\tpopd ; \\\n\ttest -s \$(DAED_BUILD_DIR)/apps/web/dist/index.html || { echo "ERROR: daed web assets were not generated"; find \$(DAED_BUILD_DIR)/apps -maxdepth 4 -type f | sort | tail -200; exit 1; } ; \\\n\tmkdir -p \$(PKG_BUILD_DIR)/webrender/web ; \\\n\tcp -rf \$(DAED_BUILD_DIR)/apps/web/dist/. \$(PKG_BUILD_DIR)/webrender/web ; \\\n\tfind \$(PKG_BUILD_DIR)/webrender/web -type f -print -quit | grep -q . || { echo "ERROR: dae-wing webrender/web is empty"; exit 1; } ;#s' package/porxy/daed/Makefile
-grep -q 'pnpm --filter ./apps/web build' package/porxy/daed/Makefile || {
-  echo "ERROR: failed to patch daed web build command"
-  exit 1
-}
 
 rm -rf feeds/luci/applications/{luci-app-dockerman,luci-app-samba4,luci-app-aria2,luci-app-diskman}
 rm -rf feeds/packages/net/{samba4,v2ray-geodata,mosdns,sing-box,aria2,ariang,adguardhome}

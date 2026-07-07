@@ -113,7 +113,7 @@ jobs:
         $XR30_CONFIG
         EOF
         [ -e config ] && cat config/config-common >> $SOURCE_NAME/.config
-        for plugin in luci-app-zerotier luci-app-socat luci-app-samba4 luci-theme-m3e luci-app-ttyd luci-app-diskman luci-app-daed luci-i18n-daed-zh-cn; do
+        for plugin in luci-app-zerotier luci-app-socat luci-app-samba4 luci-theme-m3e luci-app-ttyd luci-app-diskman; do
           echo "CONFIG_PACKAGE_${plugin}=y" >> $SOURCE_NAME/.config
         done
 
