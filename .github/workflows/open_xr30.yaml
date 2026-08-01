@@ -16,7 +16,7 @@ on:
       CUSTOM_PLUGINS:
         description: 'Extra package names separated by spaces'
         required: false
-        default: 'luci-app-store luci-app-ttyd luci-app-diskman'
+        default: 'luci-app-store'
         type: string
 
 permissions:
