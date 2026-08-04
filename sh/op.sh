@@ -251,6 +251,7 @@ CONFIG_PACKAGE_luci-app-gecoosac=y
 CONFIG_PACKAGE_luci-app-tcpdump=y
 CONFIG_PACKAGE_tcpdump=y
 CONFIG_PACKAGE_luci-app-harbor-file=y
+CONFIG_PACKAGE_luci-i18n-harbor-file-zh-cn=y
 EOF
 
 make defconfig
