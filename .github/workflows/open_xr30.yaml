@@ -16,7 +16,7 @@ on:
       CUSTOM_PLUGINS:
         description: 'Extra package names separated by spaces'
         required: false
-        default: 'luci-app-store'
+        default: 'luci-app-store luci-app-openclash'
         type: string
 
 permissions:
