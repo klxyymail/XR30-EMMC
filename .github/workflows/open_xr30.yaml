@@ -16,7 +16,7 @@ on:
       CUSTOM_PLUGINS:
         description: 'Extra package names separated by spaces'
         required: false
-        default: 'luci-app-store luci-app-ssr-plus luci-app-passwall luci-app-ddns'
+        default: 'luci-app-store luci-app-ssr-plus luci-app-passwall2 luci-app-ddns'
         type: string
 
 permissions:
