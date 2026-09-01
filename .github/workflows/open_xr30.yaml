@@ -1,4 +1,4 @@
-name: op-xr30
+name: CMCC XR30 eMMC
 
 on:
   workflow_dispatch:
@@ -27,7 +27,7 @@ env:
 
 jobs:
   build_firmware:
-    name: build XR30 eMMC with kenzok8 daede
+    name: 编译 CMCC XR30 eMMC（kenzok8 daede）
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
@@ -39,10 +39,10 @@ jobs:
             config: "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_xr30-emmc=y"
 
     steps:
-    - name: Checkout
+    - name: 检出代码
       uses: actions/checkout@v6
 
-    - name: Free disk space
+    - name: 清理磁盘空间
       run: |
         sudo rm -rf /etc/apt/sources.list.d
         sudo swapoff -a
@@ -58,7 +58,7 @@ jobs:
         rm -rf ~/{.cargo,.dotnet,.rustup}
         df -Th
 
-    - name: Install build dependencies
+    - name: 安装编译依赖
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
@@ -72,7 +72,7 @@ jobs:
         sudo chown $USER:$GROUPS /workdir
         df -Th
 
-    - name: Set variables
+    - name: 设置变量
       run: |
         TAG="$(date +'%Y%m%d')-${{ github.run_number }}"
         echo "tag=$TAG" >> $GITHUB_ENV
@@ -84,14 +84,14 @@ jobs:
         echo "REPO_URL=https://github.com/shiyu1314/openwrt-source" >> $GITHUB_ENV
         echo "REPO_BRANCH=openwrt-25.12" >> $GITHUB_ENV
 
-    - name: Clone source
+    - name: 克隆源码
       working-directory: /workdir
       run: |
         df -hT $PWD
         git clone $REPO_URL $SOURCE_NAME
         ln -sf /workdir/$SOURCE_NAME $GITHUB_WORKSPACE/$SOURCE_NAME
 
-    - name: Checkout source tag
+    - name: 检出源码标签
       run: |
         cd $SOURCE_NAME
         case $REPO_BRANCH in
@@ -106,7 +106,7 @@ jobs:
         esac
         echo "release_tag=$_release_tag" >> $GITHUB_ENV
 
-    - name: Restore build cache
+    - name: 恢复构建缓存
       id: build-cache
       uses: actions/cache/restore@v5
       with:
@@ -124,7 +124,7 @@ jobs:
           ${{ matrix.source }}-xr30-emmc-build-cache-
           ${{ matrix.source }}-mt7981-multi-build-cache-
 
-    - name: Validate toolchain cache
+    - name: 校验工具链缓存
       run: |
         cd $SOURCE_NAME
         if [ -d staging_dir ] && ! find staging_dir -path '*/toolchain-*/lib/libgcc_s.so.*' | grep -q .; then
@@ -134,7 +134,7 @@ jobs:
         fi
         rm -rf dl/go-mod-cache
 
-    - name: Prepare feeds and patches
+    - name: 准备 feeds 与补丁
       run: |
         set -x
         cd $SOURCE_NAME
@@ -144,7 +144,7 @@ jobs:
         [ -e patch ] && cp -rf patch/diy/*.patch $SOURCE_NAME
         [ -e patch ] && cp -rf patch/luci/*.patch $SOURCE_NAME/feeds/luci
 
-    - name: Run common custom script
+    - name: 运行通用自定义脚本
       run: |
         chmod +x $DIY_P1_SH
         cd $SOURCE_NAME
@@ -153,14 +153,14 @@ jobs:
         [ -e patch ] && cp -rf patch/nginx/luci.locations $SOURCE_NAME/feeds/packages/net/nginx/files-luci-support
         [ -e patch ] && cp -rf patch/nginx/uci.conf.template $SOURCE_NAME/feeds/packages/net/nginx-util/files
 
-    - name: Use kenzok8 daede source packages
+    - name: 使用 kenzok8 的 daede 软件包
       run: |
         rm -rf $SOURCE_NAME/package/porxy/dae $SOURCE_NAME/package/porxy/daed $SOURCE_NAME/package/porxy/luci-app-daede
         git clone --depth=1 https://github.com/kenzok8/openwrt-daede daede-src
         mv daede-src/dae daede-src/daed daede-src/luci-app-daede $SOURCE_NAME/package/porxy/
         rm -rf daede-src
 
-    - name: Load XR30 eMMC config
+    - name: 加载配置
       run: |
         [ -e files ] && mv files $SOURCE_NAME/files
         rm -f $SOURCE_NAME/files/etc/uci-defaults/98-install-daed-runfiles
@@ -194,7 +194,7 @@ jobs:
           echo "CONFIG_PACKAGE_${plugin}=y" >> $SOURCE_NAME/.config
         done
 
-    - name: Download package sources
+    - name: 下载软件包源码
       id: package
       run: |
         cd $SOURCE_NAME
@@ -203,7 +203,7 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    - name: BPF/LLVM early checkpoint
+    - name: BPF/LLVM 早期检查点
       run: |
         cd $SOURCE_NAME
         trap 'echo "::group::BPF checkpoint diagnostics"; find staging_dir -maxdepth 4 \( -path "*/toolchain-*" -o -name "libgcc_s.so*" -o -name "*.toolchain*" \) -print 2>/dev/null || true; find build_dir -maxdepth 3 \( -path "*/toolchain*" -o -path "*/bpf-headers*" \) -print 2>/dev/null || true; echo "::endgroup::"' ERR
@@ -214,20 +214,20 @@ jobs:
         make target/compile -j$(nproc) || yes n | make target/compile -j1 V=s
         make package/kernel/bpf-headers/compile V=s || yes n | make package/kernel/bpf-headers/compile V=s
 
-    - name: Compile firmware
+    - name: 编译固件
       id: compile
       run: |
         cd $SOURCE_NAME
         echo -e "$(nproc) thread compile"
         make -j$(nproc) || yes n | make -j1 || yes n | make -j1 V=s
 
-    - name: Clean volatile Go module cache
+    - name: 清理易失的 Go 模块缓存
       if: always()
       run: |
         cd $SOURCE_NAME
         rm -rf dl/go-mod-cache
 
-    - name: Save build cache
+    - name: 保存构建缓存
       if: always()
       uses: actions/cache/save@v5
       with:
@@ -241,11 +241,11 @@ jobs:
           ${{ matrix.source }}/bin/targets
         key: ${{ matrix.source }}-${{ matrix.device }}-build-cache-${{ github.run_id }}
 
-    - name: Show disk usage
+    - name: 显示磁盘占用
       if: (!cancelled())
       run: df -hT
 
-    - name: Organize firmware
+    - name: 整理固件
       id: organize
       run: |
         cd $SOURCE_NAME/bin/targets/*/*
@@ -260,7 +260,7 @@ jobs:
         rm -rf sha256sums
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
 
-    - name: Upload firmware to Releases
+    - name: 上传固件至 Releases
       uses: softprops/action-gh-release@v3
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -268,12 +268,12 @@ jobs:
         tag_name: ${{ env.release_tag }}-${{ env.tag }}-op-xr30
         files: ${{ env.FIRMWARE }}/*
         body: |
-          ==================== Firmware Info =======================
-          Workflow: op-xr30
-          Device: XR30 eMMC
-          Branch: ${{ env.release_tag }}
-          Static IP: ${{ github.event.inputs.OP_IP }}
-          Extra packages: ${{ github.event.inputs.CUSTOM_PLUGINS }}
-          daed source: kenzok8/openwrt-daede
-          Author: ${{ github.event.inputs.OP_author }}
-          Default password: none
+          ====================== 固件信息 =========================
+          工作流: op-xr30
+          设备: CMCC XR30 eMMC
+          分支: ${{ env.release_tag }}
+          静态 IP: ${{ github.event.inputs.OP_IP }}
+          额外软件包: ${{ github.event.inputs.CUSTOM_PLUGINS }}
+          daed 来源: kenzok8/openwrt-daede
+          作者: ${{ github.event.inputs.OP_author }}
+          默认密码: 无
