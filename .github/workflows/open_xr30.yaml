@@ -74,7 +74,7 @@ jobs:
 
     - name: Set variables
       run: |
-        TAG="$(date +'%Y%m%d')"
+        TAG="$(date +'%Y%m%d')-${{ github.run_number }}"
         echo "tag=$TAG" >> $GITHUB_ENV
         echo "OP_IP=${{ github.event.inputs.OP_IP }}" >> $GITHUB_ENV
         echo "OP_author=${{ github.event.inputs.OP_author }}" >> $GITHUB_ENV
