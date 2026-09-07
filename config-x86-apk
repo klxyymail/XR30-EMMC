@@ -1,0 +1,132 @@
+# ============================================================================
+#  x86/64 软件源插件清单（CONFIG = m，只编译成 ipk/apk，不进固件）
+#  由 XR30-EMMC 的 config/config-apk 移植：删除 MTK 专属 3 项，补入 x86 常用项
+#
+#  用法：
+#    1) 先 cp config-x86-common .config
+#    2) cat config-x86-apk >> .config
+#    3) make defconfig && make -j$(nproc)
+#    4) 把 bin/packages/x86_64/ 下生成的包挂到 nginx 自建源，刷完用 apk add 安装
+#
+#  ⚠ openclash / passwall / homeproxy / nikki / mosdns / daed 等不在官方源里，
+#    必须先在 feeds 中接入第三方插件源，否则 make defconfig 会把它们静默丢弃，
+#    编译不报错，但你会发现源里根本没有这些包。
+# ============================================================================
+
+
+## ---------------------------------------------------------------------------
+## 一、代理 / 科学（x86 性能强，这类插件是软路由主战场）
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_luci-app-openclash=m
+CONFIG_PACKAGE_luci-app-homeproxy=m
+CONFIG_PACKAGE_luci-app-nikki=m
+CONFIG_PACKAGE_luci-app-momo=m
+CONFIG_PACKAGE_luci-app-passwall=m
+CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=m
+CONFIG_PACKAGE_luci-app-daed=m
+CONFIG_PACKAGE_luci-i18n-daed-zh-cn=m
+CONFIG_PACKAGE_daed=m
+CONFIG_PACKAGE_dae=m
+CONFIG_PACKAGE_v2ray-geoip=m
+CONFIG_PACKAGE_v2ray-geosite=m
+
+## ---------------------------------------------------------------------------
+## 二、DNS / 去广告
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_luci-app-mosdns=m
+CONFIG_PACKAGE_luci-app-smartdns=m
+CONFIG_PACKAGE_luci-app-adguardhome=m
+CONFIG_PACKAGE_luci-app-ddns-go=m
+CONFIG_PACKAGE_luci-app-unblockneteasemusic=m
+
+## ---------------------------------------------------------------------------
+## 三、内网穿透 / VPN / 组网
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_luci-app-tailscale=m
+CONFIG_PACKAGE_luci-app-zerotier=m
+CONFIG_PACKAGE_luci-app-frpc=m
+CONFIG_PACKAGE_luci-app-frps=m
+CONFIG_PACKAGE_luci-app-lucky=m
+CONFIG_PACKAGE_luci-app-socat=m
+CONFIG_PACKAGE_luci-app-wireguard=m
+CONFIG_PACKAGE_luci-app-openvpn-server=m
+
+## ---------------------------------------------------------------------------
+## 四、存储 / 共享 / 下载（x86 挂硬盘场景比路由器多得多）
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_luci-app-diskman=m
+CONFIG_PACKAGE_luci-app-ksmbd=m
+CONFIG_PACKAGE_luci-i18n-ksmbd-zh-cn=m
+CONFIG_PACKAGE_luci-app-samba4=m
+CONFIG_PACKAGE_luci-app-gowebdav=m
+CONFIG_PACKAGE_luci-app-filebrowser-go=m
+CONFIG_PACKAGE_luci-app-openlist2=m
+CONFIG_PACKAGE_luci-app-aria2=m
+CONFIG_PACKAGE_luci-app-qbittorrent=m
+CONFIG_PACKAGE_luci-app-emby=m
+CONFIG_PACKAGE_luci-app-syncthing=m
+CONFIG_PACKAGE_luci-app-hd-idle=m
+CONFIG_PACKAGE_luci-app-usb-printer=m
+
+## ---------------------------------------------------------------------------
+## 五、流控 / 监控
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_luci-app-qosmate=m
+CONFIG_PACKAGE_luci-app-bandix=m
+CONFIG_PACKAGE_luci-app-nlbwmon=m
+CONFIG_PACKAGE_luci-i18n-nlbwmon-zh-cn=m
+CONFIG_PACKAGE_luci-app-rtbwmon=m
+CONFIG_PACKAGE_luci-app-wrtbwmon=m
+CONFIG_PACKAGE_luci-app-vnstat2=m
+
+## ---------------------------------------------------------------------------
+## 六、系统维护
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_luci-app-ttyd=m
+CONFIG_PACKAGE_luci-app-upnp=m
+CONFIG_PACKAGE_luci-i18n-upnp-zh-cn=m
+CONFIG_PACKAGE_luci-app-store=m
+CONFIG_PACKAGE_luci-app-arpbind=m
+CONFIG_PACKAGE_luci-app-autoreboot=m
+CONFIG_PACKAGE_luci-app-ramfree=m
+CONFIG_PACKAGE_luci-app-quickstart=m
+CONFIG_PACKAGE_luci-app-watchcat=m
+CONFIG_PACKAGE_luci-app-oaf=m
+CONFIG_PACKAGE_luci-i18n-oaf-zh-cn=m
+CONFIG_PACKAGE_luci-app-cpufreq=m          # x86 CPU 调频，软路由省电
+CONFIG_PACKAGE_luci-app-irqbalance=m
+CONFIG_PACKAGE_luci-app-sysupgrade=m
+CONFIG_PACKAGE_luci-app-vlmcsd=m
+CONFIG_PACKAGE_luci-app-mentohust=m
+CONFIG_PACKAGE_luci-app-uhttpd=m
+CONFIG_PACKAGE_luci-app-wol=m              # 网络唤醒（x86 主板多数支持）
+
+## ---------------------------------------------------------------------------
+## 七、容器（x86 是 Docker 主场，原仓库只是界面，这里把运行时也带上）
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_luci-app-dockerman=m
+CONFIG_PACKAGE_dockerd=m
+CONFIG_PACKAGE_docker-compose=m
+CONFIG_PACKAGE_kmod-ikconfig=m
+CONFIG_PACKAGE_kmod-br-netfilter=m
+CONFIG_PACKAGE_kmod-ipt-conntrack-extra=m
+CONFIG_PACKAGE_kmod-ipt-nat-extra=m
+CONFIG_PACKAGE_kmod-nft-compat=m
+CONFIG_PACKAGE_kmod-nf-flow=m
+
+## ---------------------------------------------------------------------------
+## 八、主题
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_luci-theme-argon=m
+CONFIG_PACKAGE_luci-theme-m3e=m
+CONFIG_PACKAGE_luci-theme-aurora=m
+CONFIG_PACKAGE_luci-theme-kucat=m
+CONFIG_PACKAGE_luci-theme-bootstrap=m
+
+
+## ===========================================================================
+##  以下为从原仓库删除的 MTK 专属项，x86 不需要，仅作留档
+## ===========================================================================
+# CONFIG_PACKAGE_luci-app-mtwifi-cfg    闭源无线配置页 → x86 无 MTK 无线
+# CONFIG_PACKAGE_luci-app-turboacc-mtk  MTK 硬件加速    → x86 用 flow offload
+# CONFIG_PACKAGE_luci-app-eqos-mtk      MTK QoS         → x86 用 qosmate / SQM

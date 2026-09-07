@@ -1,0 +1,228 @@
+# ============================================================================
+#  x86/64 软路由固件配置
+#  由 klxyymail/XR30-EMMC（MT7981 / mediatek_filogic）的 config-common 移植而来
+#
+#  源码：https://github.com/shiyu1314/openwrt-source   分支：openwrt-25.12
+#  用法：cp config-x86-common <openwrt>/.config && cd <openwrt> && make defconfig
+#
+#  重要：这是"增量配置"，只写与默认不同的项，其余交给 make defconfig 补全。
+#        如果某个包名在当前 feeds 里不存在，defconfig 会静默丢弃它，不会报错，
+#        所以第三方插件（openclash / passwall / daed 等）能否编出来，
+#        取决于你有没有接入对应的 feeds（见 README-x86.md 第四节）。
+# ============================================================================
+
+
+## ---------------------------------------------------------------------------
+## 一、目标平台
+##     ↓ 原仓库的 mediatek/filogic/MT7981 全部内容已移除
+## ---------------------------------------------------------------------------
+CONFIG_TARGET_x86=y
+CONFIG_TARGET_x86_64=y
+CONFIG_TARGET_x86_64_DEVICE_generic=y
+CONFIG_TARGET_DEVICE_x86_64_DEVICE_generic=y
+CONFIG_TARGET_DEVICE_PACKAGES_x86_64_DEVICE_generic=""
+
+## ---------------------------------------------------------------------------
+## 二、编译优化
+##     原配置是 -mcpu=cortex-a53+crc+crypto（ARM 专属），x86 必须换掉
+## ---------------------------------------------------------------------------
+CONFIG_TARGET_OPTIMIZATION="-O2 -pipe"
+# 机器较新（Haswell 及以后）可以换成下面这行，转发性能略好，但老机器会起不来：
+# CONFIG_TARGET_OPTIMIZATION="-O2 -pipe -march=x86-64-v2"    # v2 / v3 自选
+
+CONFIG_DEVEL=y
+CONFIG_TOOLCHAINOPTS=y
+CONFIG_BUSYBOX_CUSTOM=y
+CONFIG_TARGET_PER_DEVICE_ROOTFS=y
+CONFIG_AFALG_UPDATE_CTR_IV=y
+
+# busybox：磁盘/分区识别，x86 挂载硬盘、U 盘需要
+CONFIG_BUSYBOX_CONFIG_BLKID=y
+CONFIG_BUSYBOX_CONFIG_FEATURE_BLKID_TYPE=y
+CONFIG_BUSYBOX_CONFIG_VOLUMEID=y
+
+## ---------------------------------------------------------------------------
+## 三、引导方式与镜像（x86 相对 MT7981 最大的结构差异）
+## ---------------------------------------------------------------------------
+CONFIG_GRUB_IMAGES=y              # BIOS 启动：openwrt-x86-64-generic-ext4-combined.img.gz
+CONFIG_GRUB_EFI_IMAGES=y          # UEFI 启动：openwrt-x86-64-generic-ext4-combined-efi.img.gz
+CONFIG_TARGET_ROOTFS_EXT4FS=y     # x86 建议 ext4：可扩容、可重置、不怕写坏
+CONFIG_TARGET_ROOTFS_TARGZ=y      # rootfs.tar.gz，方便塞进 Docker 或手动安装
+CONFIG_TARGET_IMAGES_GZIP=y
+# CONFIG_TARGET_ROOTFS_SQUASHFS is not set   # x86 上 squashfs 无法 extroot，不建议
+
+CONFIG_TARGET_KERNEL_PARTSIZE=32      # 内核分区 MB（kmod 多，默认 16 容易不够）
+CONFIG_TARGET_ROOTFS_PARTSIZE=1024    # 根分区 MB，按硬盘改 512 / 2048 均可
+
+# 虚拟机镜像（按需打开，全部打开会显著拉长编译时间）
+# CONFIG_QCOW2_IMAGES=y      # PVE / KVM
+# CONFIG_VMDK_IMAGES=y       # ESXi
+# CONFIG_VDI_IMAGES=y        # VirtualBox
+# CONFIG_ISO_IMAGES=y        # 光盘 ISO
+# CONFIG_GRUB_TIMEOUT="3"    # GRUB 菜单等待秒数
+
+## ---------------------------------------------------------------------------
+## 四、网卡驱动  ★ x86 最容易翻车的地方 ★
+##     编译前请先在目标机器上跑 lspci -nnk | grep -i ethernet 确认网卡型号。
+##     拿不准就先开 CONFIG_ALL_KMODS=y 编一版，装上去看哪张网卡有 IP。
+## ---------------------------------------------------------------------------
+# —— Intel ——
+CONFIG_PACKAGE_kmod-e1000e=y      # I217 / I218 / I219-V，软路由主板最常见
+CONFIG_PACKAGE_kmod-igb=y         # I210 / I211 / 82575 / 82576
+CONFIG_PACKAGE_kmod-igc=y         # i225-V / i226-V，2.5G 软路由主流
+CONFIG_PACKAGE_kmod-e1000=y       # 老千兆（8254x / 8257x）
+# —— Realtek ——
+CONFIG_PACKAGE_kmod-r8169=y       # RTL8111 / RTL8168，内核自带（兼容性一般但能用）
+# —— 虚拟化 ——
+CONFIG_PACKAGE_kmod-virtio-net=y  # PVE / KVM 半虚拟化网卡，必选
+CONFIG_PACKAGE_kmod-vmxnet3=y     # ESXi
+# —— 万兆 / 服务器（按需，多数在官方 packages feed 里）——
+# CONFIG_PACKAGE_kmod-ixgbe=y     # Intel X520 / X540
+# CONFIG_PACKAGE_kmod-i40e=y      # Intel X710 / XL710
+# CONFIG_PACKAGE_kmod-tg3=y       # Broadcom 千兆
+# CONFIG_PACKAGE_kmod-atlantic=y  # Aquantia AQC 万兆
+# —— USB 网卡（U 盘 / Type-C 扩展）——
+CONFIG_PACKAGE_kmod-usb-net-rtl8152=y        # RTL8152/8153/8156 USB 2.5G
+CONFIG_PACKAGE_kmod-usb-net-asix-ax88179=y   # AX88179 USB3 千兆
+# —— 第三方驱动（需额外 feeds，默认源没有）——
+# CONFIG_PACKAGE_kmod-r8125=y     # RTL8125 2.5G 性能优于内核 r8169
+# CONFIG_PACKAGE_kmod-r8168=y     # Realtek 官方闭源千兆驱动
+
+## ---------------------------------------------------------------------------
+## 五、存储与文件系统（软路由挂硬盘 / NVMe 用）
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_kmod-ata-ahci=y        # SATA 控制器
+CONFIG_PACKAGE_kmod-nvme=y            # NVMe SSD
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y # USB3 硬盘盒 UASP 协议
+CONFIG_PACKAGE_kmod-usb2=y
+CONFIG_PACKAGE_kmod-usb3=y
+
+CONFIG_PACKAGE_kmod-fs-ext4=y
+CONFIG_PACKAGE_kmod-fs-vfat=y
+CONFIG_PACKAGE_kmod-fs-exfat=y
+CONFIG_PACKAGE_kmod-fs-ntfs3=y        # NTFS 读写（内核态，比 ntfs-3g 快）
+CONFIG_PACKAGE_kmod-fs-btrfs=y
+# CONFIG_PACKAGE_kmod-fs-xfs=y        # 按需
+CONFIG_PACKAGE_kmod-nls-utf8=y        # vfat / exfat 中文文件名需要
+CONFIG_PACKAGE_kmod-nls-cp437=y
+CONFIG_PACKAGE_kmod-nls-iso8859-1=y
+
+CONFIG_PACKAGE_blockd=y
+CONFIG_PACKAGE_automount=y
+CONFIG_PACKAGE_fdisk=y
+CONFIG_PACKAGE_cfdisk=y
+CONFIG_PACKAGE_parted=y
+CONFIG_PACKAGE_e2fsprogs=y            # resize2fs：写盘后扩容根分区要用
+CONFIG_PACKAGE_losetup=y
+CONFIG_PACKAGE_lsblk=y
+CONFIG_PACKAGE_smartmontools=y        # 硬盘健康（luci-app-diskman 依赖）
+CONFIG_PACKAGE_hdparm=y
+
+## ---------------------------------------------------------------------------
+## 六、LuCI 与 Web 服务（从原仓库平移，nginx 取代 uhttpd）
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_luci-nginx=y
+CONFIG_PACKAGE_luci-compat=y
+CONFIG_LUCI_LANG_zh_Hans=y
+CONFIG_PACKAGE_luci-theme-argon=y
+
+CONFIG_PACKAGE_nginx-ssl=y
+CONFIG_PACKAGE_nginx-mod-brotli=y
+CONFIG_PACKAGE_nginx-mod-luci=y
+CONFIG_PACKAGE_nginx-mod-rtmp=y
+CONFIG_PACKAGE_nginx-mod-stream=y
+CONFIG_PACKAGE_nginx-mod-ubus=y
+CONFIG_PACKAGE_nginx-mod-zstd=y
+CONFIG_PACKAGE_nginx-ssl-util=y
+CONFIG_NGINX_DAV=y
+CONFIG_NGINX_HTTP_AUTH_BASIC=y
+CONFIG_NGINX_HTTP_QUIC=y
+CONFIG_NGINX_HTTP_REAL_IP=y
+CONFIG_NGINX_HTTP_SUB=y
+CONFIG_NGINX_STREAM_REAL_IP=y
+
+## ---------------------------------------------------------------------------
+## 七、网络 / 转发
+##     ★ x86 没有 MTK 的 hnat / wed 硬件加速，纯靠 CPU + 软件 flow offload，
+##       所以原仓库的 luci-app-turboacc-mtk、kmod-mediatek_hnat、kmod-warp 全部删掉
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_kmod-nft-offload=y       # 软件 flow offload，务必在防火墙里开启
+CONFIG_PACKAGE_kmod-nft-tproxy=y        # 透明代理（openclash / homeproxy）
+CONFIG_PACKAGE_kmod-nft-nat6=y
+CONFIG_PACKAGE_ip-bridge=y
+CONFIG_PACKAGE_ipset=y
+CONFIG_PACKAGE_irqbalance=y             # 多核 IRQ 均衡，多口软路由明显有用
+CONFIG_PACKAGE_kmod-tcp-bbr=y           # BBR 拥塞控制
+CONFIG_PACKAGE_kmod-bonding=y           # 链路聚合（按需）
+CONFIG_PACKAGE_kmod-veth=y              # Docker / 容器网络
+# CONFIG_PACKAGE_kmod-nft-fullcone=y    # fullcone NAT，需第三方源
+# CONFIG_PACKAGE_luci-app-turboacc=y    # 第三方 SFE 版本，官方源没有
+
+## ---------------------------------------------------------------------------
+## 八、命令行工具与基础库
+## ---------------------------------------------------------------------------
+CONFIG_PACKAGE_ca-certificates=y
+CONFIG_PACKAGE_curl=y
+CONFIG_PACKAGE_htop=y
+CONFIG_PACKAGE_iperf3=y
+CONFIG_PACKAGE_ethtool=y
+CONFIG_PACKAGE_tcpdump=y
+CONFIG_PACKAGE_iw=y
+CONFIG_PACKAGE_iwinfo-ucode=y
+CONFIG_PACKAGE_wireless-tools=y
+CONFIG_PACKAGE_xz-utils=y
+CONFIG_PACKAGE_bash=y
+CONFIG_PACKAGE_lm-sensors=y           # 温度监控
+CONFIG_PACKAGE_sensors-detect=y
+CONFIG_PACKAGE_kmod-hwmon-core=y
+CONFIG_PACKAGE_kmod-hwmon-coretemp=y  # Intel CPU 温度
+CONFIG_PACKAGE_kmod-i2c-core=y
+CONFIG_PACKAGE_kmod-i2c-i801=y        # 读 SuperIO 传感器
+CONFIG_PACKAGE_kmod-i2c-algo-bit=y
+
+# CPU 微码（按需，只有一个生效，两个都写也不会冲突）
+CONFIG_PACKAGE_intel-microcode=y
+# CONFIG_PACKAGE_amd-microcode=y
+
+# 加密模块：代理类插件（openclash / homeproxy / daed）依赖
+CONFIG_PACKAGE_kmod-crypto-acompress=y
+CONFIG_PACKAGE_kmod-crypto-chacha20poly1305=y
+CONFIG_PACKAGE_kmod-crypto-ccm=y
+CONFIG_PACKAGE_kmod-crypto-cmac=y
+CONFIG_PACKAGE_kmod-crypto-crc32c=y
+CONFIG_PACKAGE_kmod-crypto-ctr=y
+CONFIG_PACKAGE_kmod-crypto-gcm=y
+CONFIG_PACKAGE_kmod-crypto-gf128=y
+CONFIG_PACKAGE_kmod-crypto-ghash=y
+CONFIG_PACKAGE_kmod-crypto-hmac=y
+CONFIG_PACKAGE_kmod-crypto-rng=y
+CONFIG_PACKAGE_kmod-crypto-seqiv=y
+CONFIG_PACKAGE_kmod-crypto-sha256=y
+CONFIG_PACKAGE_kmod-crypto-sha512=y
+CONFIG_OPENSSL_WITH_NPN=y
+
+# daed / dae 需要的 eBPF 相关内核模块（原仓库 config-apk 里有，x86 同样要）
+CONFIG_PACKAGE_kmod-sched-core=y
+CONFIG_PACKAGE_kmod-sched-bpf=y
+CONFIG_PACKAGE_kmod-xdp-sockets-diag=y
+
+## ---------------------------------------------------------------------------
+## 九、x86 上已删除的原仓库条目（列出来方便对照，勿再加回）
+## ---------------------------------------------------------------------------
+# CONFIG_TARGET_mediatek / CONFIG_TARGET_mediatek_filogic / MT7981 设备项
+# CONFIG_MTK_*                      闭源无线驱动全部选项
+# CONFIG_PACKAGE_kmod-mt_wifi       联发科闭源 Wi-Fi
+# CONFIG_PACKAGE_kmod-mediatek_hnat 硬件 NAT（x86 不存在）
+# CONFIG_PACKAGE_kmod-warp          WED 无线加速（x86 不存在）
+# CONFIG_PACKAGE_kmod-conninfra     联发科连接子系统
+# CONFIG_PACKAGE_mtkreconnect       联发科 Wi-Fi 守护
+# CONFIG_PACKAGE_bndstrg            漫游引导（联发科）
+# CONFIG_PACKAGE_luci-app-mtwifi-cfg      闭源无线配置页
+# CONFIG_PACKAGE_luci-app-turboacc-mtk    MTK 版加速
+# CONFIG_PACKAGE_luci-app-eqos-mtk        MTK 版限速
+# CONFIG_PACKAGE_datconf / l1util / kvcedit / libkvcutil   联发科 EEPROM 工具
+# CONFIG_PACKAGE_autocore-arm        ARM 专用，x86 见下
+CONFIG_PACKAGE_autocore-x86=y
+# 若你的源里没有 autocore-x86，defconfig 会丢弃；改用 CONFIG_PACKAGE_autocore=y
