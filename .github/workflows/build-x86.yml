@@ -1,0 +1,202 @@
+name: OpenWrt x86/64
+
+on:
+  workflow_dispatch:
+    inputs:
+      OP_IP:
+        description: '管理后台静态 IP'
+        required: false
+        default: '192.168.6.1'
+        type: string
+      OP_author:
+        description: '编译作者'
+        required: false
+        default: 'klxyy'
+        type: string
+      CUSTOM_PLUGINS:
+        description: '额外插件，空格分隔'
+        required: false
+        default: 'luci-app-arpbind luci-app-store luci-app-watchcat luci-app-passwall luci-app-ddns-go luci-app-openclash luci-app-nlbwmon luci-app-rtbwmon luci-app-lucky luci-app-diskman luci-app-cpufreq'
+        type: string
+      ROOTFS_PARTSIZE:
+        description: '根分区大小(MB)'
+        required: false
+        default: '1024'
+        type: string
+      BUILD_QCOW2:
+        description: '是否额外生成 qcow2 虚拟机镜像'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  DIY_P1_SH: sh/x86-diy.sh
+
+jobs:
+  build_firmware:
+    name: 编译 x86/64 软路由固件
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        device: ["x86-64"]
+        source: ["openwrt"]
+
+    steps:
+      - name: 检出配置仓库
+        uses: actions/checkout@v6
+
+      - name: 清理磁盘空间
+        run: |
+          sudo rm -rf /etc/apt/sources.list.d
+          sudo swapoff -a
+          sudo rm -f /swapfile /mnt/swapfile
+          sudo docker image prune -a -f
+          sudo systemctl stop docker
+          sudo snap set system refresh.retain=2
+          sudo apt-get -y purge firefox clang* ghc* google* llvm* mono* mongo* mysql* php*
+          sudo apt-get -y autoremove --purge
+          sudo apt-get clean
+          sudo rm -rf /etc/mysql /etc/php /usr/lib/jvm /usr/libexec/docker /usr/local /usr/src/* /var/lib/docker /var/lib/gems /var/lib/mysql /var/lib/snapd /etc/skel /opt/{microsoft,az,hostedtoolcache,cni,mssql-tools,pipx} /usr/share/{az*,dotnet,swift,miniconda,gradle*,java,kotlinc,ri,sbt} /root/{.sbt,.local,.npm}
+          sudo sed -i '/NVM_DIR/d;/skel/d' /root/{.bashrc,.profile}
+          rm -rf ~/{.cargo,.dotnet,.rustup}
+          df -Th
+
+      - name: 安装编译依赖
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tar build-essential flex bison cmake g++ gawk gcc-multilib g++-multilib gettext git libfuse-dev libncurses5-dev libssl-dev python3 python3-pip python3-ply python3-distutils python3-pyelftools rsync unzip zlib1g-dev file wget subversion patch upx-ucl autoconf automake curl asciidoc binutils bzip2 lib32gcc-s1 libc6-dev-i386 uglifyjs msmtp texinfo libreadline-dev libglib2.0-dev xmlto libelf-dev libtool autopoint antlr3 gperf ccache swig coreutils haveged scons libpython3-dev rename qemu-utils clang llvm
+          sudo apt-get clean
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'noreply@github.com'
+          sudo timedatectl set-timezone 'Asia/Shanghai'
+          sudo mkdir -p /workdir
+          sudo chown $USER:$GROUPS /workdir
+          df -Th
+
+      - name: 设置变量
+        run: |
+          TAG="$(date +'%Y%m%d')-${{ github.run_number }}"
+          echo "tag=$TAG" >> $GITHUB_ENV
+          echo "OP_IP=${{ github.event.inputs.OP_IP }}" >> $GITHUB_ENV
+          echo "OP_author=${{ github.event.inputs.OP_author }}" >> $GITHUB_ENV
+          echo "CUSTOM_PLUGINS=${{ github.event.inputs.CUSTOM_PLUGINS }}" >> $GITHUB_ENV
+          echo "ROOTFS_PARTSIZE=${{ github.event.inputs.ROOTFS_PARTSIZE }}" >> $GITHUB_ENV
+          echo "DEVICE_NAME=${{ matrix.device }}" >> $GITHUB_ENV
+          echo "SOURCE_NAME=${{ matrix.source }}" >> $GITHUB_ENV
+          echo "REPO_URL=https://github.com/shiyu1314/openwrt-source" >> $GITHUB_ENV
+          echo "REPO_BRANCH=openwrt-25.12" >> $GITHUB_ENV
+          echo "FIRMWARE=${{ matrix.source }}/bin/targets/x86/64" >> $GITHUB_ENV
+
+      - name: 克隆源码
+        working-directory: /workdir
+        run: |
+          df -hT $PWD
+          git clone $REPO_URL $SOURCE_NAME
+          ln -sf /workdir/$SOURCE_NAME $GITHUB_WORKSPACE/$SOURCE_NAME
+
+      - name: 检出源码标签
+        run: |
+          cd $SOURCE_NAME
+          case $REPO_BRANCH in
+            openwrt-25.12)
+              _release_tag=$(git tag --sort=taggerdate --list 'v25.*' | tail -1)
+              git checkout $_release_tag
+              ;;
+            *)
+              echo "Can't get local/upstream branch or tag"
+              exit 1
+              ;;
+          esac
+          echo "release_tag=$_release_tag" >> $GITHUB_ENV
+
+      - name: 更新 feeds
+        run: |
+          cd $SOURCE_NAME
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          cd ..
+
+      - name: 拷贝补丁
+        run: |
+          # 原仓库的 patch/diy 与 patch/luci 多为 MTK 平台服务，
+          # x86 下如无对应补丁目录会自动跳过；若你有自己的补丁放同名目录即可生效
+          [ -e patch/diy ]  && cp -rf patch/diy/*.patch  $SOURCE_NAME           || echo "无 diy 补丁"
+          [ -e patch/luci ] && cp -rf patch/luci/*.patch $SOURCE_NAME/feeds/luci || echo "无 luci 补丁"
+
+      - name: 生成 .config
+        run: |
+          cp config-x86-common $SOURCE_NAME/.config
+          # 软件源插件清单（=m，只编译不进固件）；不需要自建源可以注释掉这行
+          cat config-x86-apk >> $SOURCE_NAME/.config
+          # 镜像分区大小按输入调整
+          sed -i "s/CONFIG_TARGET_ROOTFS_PARTSIZE=.*/CONFIG_TARGET_ROOTFS_PARTSIZE=${{ github.event.inputs.ROOTFS_PARTSIZE }}/" $SOURCE_NAME/.config
+          if [ "${{ github.event.inputs.BUILD_QCOW2 }}" = "true" ]; then
+            echo "CONFIG_QCOW2_IMAGES=y" >> $SOURCE_NAME/.config
+          fi
+
+      - name: 执行 DIY 脚本
+        run: |
+          chmod +x $DIY_P1_SH
+          cd $SOURCE_NAME
+          $GITHUB_WORKSPACE/$DIY_P1_SH
+          cd ..
+
+      - name: 设置静态 IP
+        run: |
+          sed -i "s/192\.168\.1\.1/${{ github.event.inputs.OP_IP }}/" \
+            $SOURCE_NAME/package/base-files/files/bin/config_generate
+
+      - name: 注入自定义插件
+        run: |
+          IFS=' ' read -r -a plugins <<< "${{ github.event.inputs.CUSTOM_PLUGINS }}"
+          for plugin in "${plugins[@]}"; do
+            case "$plugin" in
+              luci-app-daed|luci-i18n-daed-zh-cn|luci-app-daede|daed|dae)
+                continue
+                ;;
+            esac
+            echo "CONFIG_PACKAGE_${plugin}=y" >> $SOURCE_NAME/.config
+          done
+          cd $SOURCE_NAME
+          make defconfig
+          make download -j8
+
+      - name: 编译固件
+        id: compile
+        run: |
+          cd $SOURCE_NAME
+          echo -e "$(nproc) thread compile"
+          make -j$(nproc) || yes n || make -j1 || yes n || make -j1 V=s
+
+      - name: 整理固件
+        run: |
+          cd $FIRMWARE
+          rm -rf packages
+          ls -lh
+          echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+
+      - name: 上传固件至 Releases
+        uses: softprops/action-gh-release@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.release_tag }}-${{ env.tag }}-op-x86
+          files: ${{ env.FIRMWARE }}/*
+          body: |
+            ====================== 固件信息 =========================
+            工作流: op-x86
+            设备: x86/64 软路由（Generic）
+            分支: ${{ env.release_tag }}
+            静态 IP: ${{ github.event.inputs.OP_IP }}
+            根分区: ${{ github.event.inputs.ROOTFS_PARTSIZE }} MB
+            额外软件包: ${{ github.event.inputs.CUSTOM_PLUGINS }}
+            作者: ${{ github.event.inputs.OP_author }}
+            默认密码: 无
+
+            镜像说明:
+              *-ext4-combined-efi.img.gz   → UEFI 启动（新机器选这个）
+              *-ext4-combined.img.gz       → Legacy/BIOS 启动
+              *-rootfs.tar.gz              → Docker / 手动安装
