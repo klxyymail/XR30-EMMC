@@ -245,27 +245,29 @@ jobs:
     - name: 上传配置文件
       continue-on-error: true
       env:
-        WORK_DIR: ${{ github.workspace }}
         SOURCE_DIR: ${{ github.workspace }}/openwrt
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         set -e
-        cd "$WORK_DIR"
         cp -f "$SOURCE_DIR/.config" defconfig.config
+        mkdir -p /tmp/config-out && cp defconfig.config /tmp/config-out/
 
-        git config --global user.name "GitHub Actions"
-        git config --global user.email "actions@github.com"
-
-        if ! git ls-files --error-unmatch defconfig.config >/dev/null 2>&1; then
-          echo "首次上传 defconfig.config"
-          git add defconfig.config
-          git commit -m "初始化 defconfig.config（Actions #${GITHUB_RUN_NUMBER}）"
-          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:"${{ github.ref }}"
-        elif git diff --quiet -- defconfig.config && git diff --cached --quiet -- defconfig.config; then
-          echo "defconfig.config 未修改，无需上传"
+        # 文件已存在则带上 sha 更新，否则新建
+        SHA=$(gh api "repos/${{ github.repository }}/contents/defconfig.config" \
+              --jq .sha 2>/dev/null || echo "")
+        if [ -n "$SHA" ]; then
+          gh api -X PUT "repos/${{ github.repository }}/contents/defconfig.config" \
+            -f message="更新 defconfig.config（Actions #${GITHUB_RUN_NUMBER}）" \
+            -f content="$(base64 -w0 defconfig.config)" \
+            -f sha="$SHA" \
+            -f branch="${GITHUB_REF_NAME}" >/dev/null
+          echo "defconfig.config 已更新"
         else
-          git add defconfig.config
-          git commit -m "更新 defconfig.config（Actions #${GITHUB_RUN_NUMBER}）"
-          git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:"${{ github.ref }}"
+          gh api -X PUT "repos/${{ github.repository }}/contents/defconfig.config" \
+            -f message="初始化 defconfig.config（Actions #${GITHUB_RUN_NUMBER}）" \
+            -f content="$(base64 -w0 defconfig.config)" \
+            -f branch="${GITHUB_REF_NAME}" >/dev/null
+          echo "defconfig.config 首次上传"
         fi
 
     - name: 编译固件
