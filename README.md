@@ -5,8 +5,7 @@
 - ✅ **RAX3000M NAND **
 - ✅ **RAX3000M 256M NAND**
 - ✅ **XR30 EMMC 版**  （.bin已测试）
-- ✅ **XR30 NAND 版**
-- ✅ **JCG Q30 PRO**  （.itb已测试）
+
 
 ## ⚡ 核心特性
 - **自建源支持**
