@@ -242,7 +242,7 @@ jobs:
         mkdir -p /tmp/config-out && cp defconfig.config /tmp/config-out/
 
         # 用 jq 从文件读取并 base64，避免大字符串进入 argv（单参数上限 128KB）
-        jq -Rs --arg msg "更新 defconfig.config（Actions #${GITHUB_RUN_NUMBER}）" \
+        jq -Rs --arg msg "更新 defconfig.config（Actions Run ${GITHUB_RUN_NUMBER}）" \
                --arg branch "${GITHUB_REF_NAME}" \
                '{message:$msg, content:(.|@base64), branch:$branch}' \
                defconfig.config > /tmp/payload.json
