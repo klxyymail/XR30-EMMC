@@ -71,6 +71,13 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
         df -Th
+        
+    - name: 资源体检
+      run: |
+        echo "CPU: $(nproc)"
+        free -h
+        df -h /
+        swapon --show || echo "无 swap（危险）"
 
     - name: 设置变量
       run: |
