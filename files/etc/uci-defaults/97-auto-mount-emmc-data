@@ -1,16 +1,20 @@
 #!/bin/sh
 #
 # 97-auto-mount-emmc-data
-# 自动把 eMMC 上"未分配空间"建成分区并挂载（XR30 / RAX3000M eMMC 版）
+# 自动把 eMMC 上的"未分配空间"建成分区并挂载（XR30 / RAX3000M eMMC 版）
 #
-# 适用场景：GPT 磁盘上 p1~p6 之后有整块未分配空间（无 data 分区）
+# 执行机制：由 /etc/init.d/boot (START=10) 中的 uci_apply_defaults 调用
+#   - 每次开机都会执行，直到脚本 exit 0 才会被自动删除
+#   - 因此"分区已建好、内核尚未识别"这类情况，重启一次后会继续跑
 #
-# 首次启动：用 parted 在最大空闲区间建分区 → 重启
-# 再次启动：分区已存在 → 格式化（仅当无文件系统）→ 挂载 → 写 fstab
+# 处理流程：
+#   1. 找到现成的 data 分区 → 直接挂载
+#   2. 找不到 → 用 parted 在最大未分配区间建分区 → 重读分区表 → 格式化 → 挂载
+#   3. 写入 /etc/config/fstab，之后每次开机自动挂载
 #
 # 安全约束：
 #   - 只在 eMMC（mmcblk*）上执行，NAND 机型自动跳过
-#   - 只在"未分配空间"内建分区，绝不触碰 p1~p6（factory/MAC 所在）
+#   - 只在"未分配空间"内建分区，绝不触碰已有分区（factory/MAC 在 p2）
 #   - 已有文件系统则原样挂载，绝不格式化
 #   - 可安全重复运行
 #
@@ -18,22 +22,26 @@
 TARGET="/mnt/data"
 MIN_MB=512
 LOGTAG="auto-mount"
+LOGFILE="/tmp/auto-mount-emmc.log"
 
-log() { logger -t "$LOGTAG" "$@"; }
+log() {
+	logger -t "$LOGTAG" "$@" 2>/dev/null
+	echo "[$(date '+%H:%M:%S')] $*" >> "$LOGFILE" 2>/dev/null
+}
 
 # ---------------------------------------------------------
 # 1. 确认 eMMC 设备
 # ---------------------------------------------------------
 DISK=""
 for d in /sys/block/mmcblk[0-9]; do
-    [ -d "$d" ] || continue
-    DISK="/dev/$(basename "$d")"
-    break
+	[ -d "$d" ] || continue
+	DISK="/dev/$(basename "$d")"
+	break
 done
 
 if [ -z "$DISK" ] || [ ! -b "$DISK" ]; then
-    log "非 eMMC 设备，跳过"
-    exit 0
+	log "非 eMMC 设备，跳过"
+	exit 0
 fi
 
 # ---------------------------------------------------------
@@ -41,17 +49,17 @@ fi
 # ---------------------------------------------------------
 i=0
 while [ $i -lt 20 ]; do
-    ls ${DISK}p* >/dev/null 2>&1 && break
-    i=$((i + 1))
-    sleep 1
+	ls ${DISK}p* >/dev/null 2>&1 && break
+	i=$((i + 1))
+	sleep 1
 done
 
 # ---------------------------------------------------------
 # 3. 已挂载则跳过（幂等）
 # ---------------------------------------------------------
 if grep -q " ${TARGET} " /proc/mounts; then
-    log "${TARGET} 已挂载，跳过"
-    exit 0
+	log "${TARGET} 已挂载，跳过"
+	exit 0
 fi
 
 # ---------------------------------------------------------
@@ -60,85 +68,85 @@ fi
 # ---------------------------------------------------------
 CAND=""
 for p in ${DISK}p*; do
-    [ -b "$p" ] || continue
-    if [ "$(blkid -s PARTLABEL -o value "$p" 2>/dev/null)" = "data" ]; then
-        CAND="$p"
-        break
-    fi
+	[ -b "$p" ] || continue
+	if [ "$(blkid -s PARTLABEL -o value "$p" 2>/dev/null)" = "data" ]; then
+		CAND="$p"
+		break
+	fi
 done
 
 if [ -z "$CAND" ]; then
-    BEST=0
-    MIN_SECTORS=$((MIN_MB * 2048))
-    for p in ${DISK}p*; do
-        [ -b "$p" ] || continue
-        grep -q "^${p} " /proc/mounts && continue
-        sz=$(cat /sys/block/$(basename "$DISK")/$(basename "$p")/size 2>/dev/null)
-        [ -n "$sz" ] || continue
-        [ "$sz" -ge "$MIN_SECTORS" ] || continue
-        if [ "$sz" -gt "$BEST" ]; then
-            BEST=$sz
-            CAND=$p
-        fi
-    done
+	BEST=0
+	MIN_SECTORS=$((MIN_MB * 2048))
+	for p in ${DISK}p*; do
+		[ -b "$p" ] || continue
+		grep -q "^${p} " /proc/mounts && continue
+		sz=$(cat /sys/block/$(basename "$DISK")/$(basename "$p")/size 2>/dev/null)
+		[ -n "$sz" ] || continue
+		[ "$sz" -ge "$MIN_SECTORS" ] || continue
+		if [ "$sz" -gt "$BEST" ]; then
+			BEST=$sz
+			CAND=$p
+		fi
+	done
 fi
 
 # ---------------------------------------------------------
 # 5. 没有现成分区 → 在未分配空间里新建一个
 # ---------------------------------------------------------
 if [ -z "$CAND" ]; then
-    if ! command -v parted >/dev/null 2>&1; then
-        log "未找到大分区，且缺少 parted，跳过（请安装 parted）"
-        exit 0
-    fi
+	if ! command -v parted >/dev/null 2>&1; then
+		log "无可用大分区，且缺少 parted（需 CONFIG_PACKAGE_parted=y），跳过"
+		exit 1
+	fi
 
-    # 取最大的空闲区间（自动忽略中间的小碎片）
-    FREE=$(parted -s -m "$DISK" unit MiB print free 2>/dev/null | awk -F: '
-        /free;$/ {
-            gsub(/MiB/,"",$2); gsub(/MiB/,"",$3);
-            sz = $3 - $2;
-            if (sz > best) { best = sz; s = $2; e = $3 }
-        }
-        END { if (best > 0) printf "%s %s %.0f", s, e, best }
-    ')
-    [ -n "$FREE" ] || { log "无可用未分配空间"; exit 0; }
+	# 取最大的空闲区间（自动忽略中间的小碎片）
+	FREE=$(parted -s -m "$DISK" unit MiB print free 2>/dev/null | awk -F: '
+		/free;$/ {
+			gsub(/MiB/,"",$2); gsub(/MiB/,"",$3);
+			sz = $3 - $2;
+			if (sz > best) { best = sz; s = $2; e = $3 }
+		}
+		END { if (best > 0) printf "%s %s %.0f", s, e, best }
+	')
+	[ -n "$FREE" ] || { log "无可用未分配空间"; exit 0; }
 
-    START=$(echo "$FREE" | cut -d' ' -f1)
-    END=$(echo "$FREE" | cut -d' ' -f2)
-    SIZE=$(echo "$FREE" | cut -d' ' -f3)
+	START=$(echo "$FREE" | cut -d' ' -f1)
+	END=$(echo "$FREE" | cut -d' ' -f2)
+	SIZE=$(echo "$FREE" | cut -d' ' -f3)
 
-    if [ -z "$SIZE" ] || [ "$SIZE" -lt "$MIN_MB" ]; then
-        log "未分配空间过小（${SIZE}MiB），跳过"
-        exit 0
-    fi
+	if [ -z "$SIZE" ] || [ "$SIZE" -lt "$MIN_MB" ]; then
+		log "未分配空间过小（${SIZE}MiB），跳过"
+		exit 0
+	fi
 
-    log "在 ${START}MiB-${END}MiB（${SIZE}MiB）创建 data 分区"
+	log "在 ${START}MiB-${END}MiB（${SIZE}MiB）创建 data 分区"
 
-    if ! parted -a optimal -s "$DISK" unit MiB mkpart data ext4 "$START" "$END" 2>/dev/null; then
-        log "创建分区失败"
-        exit 1
-    fi
+	parted -a optimal -s "$DISK" unit MiB mkpart data ext4 "$START" "$END"
+	if [ $? -ne 0 ]; then
+		log "创建分区失败（分区可能已存在）"
+	fi
 
-    # 让内核重读分区表
-    command -v partx >/dev/null 2>&1 && partx -a "$DISK" 2>/dev/null
-    command -v partprobe >/dev/null 2>&1 && partprobe "$DISK" 2>/dev/null
+	# 让内核重读分区表；eMMC 通常无需重启
+	command -v partx      >/dev/null 2>&1 && partx -a "$DISK" >/dev/null 2>&1
+	command -v partprobe  >/dev/null 2>&1 && partprobe "$DISK" >/dev/null 2>&1
+	command -v blockdev   >/dev/null 2>&1 && blockdev --rereadpt "$DISK" >/dev/null 2>&1
+	sleep 3
 
-    sleep 3
+	# 重新定位新建的分区
+	for p in ${DISK}p*; do
+		[ -b "$p" ] || continue
+		if [ "$(blkid -s PARTLABEL -o value "$p" 2>/dev/null)" = "data" ]; then
+			CAND="$p"
+			break
+		fi
+	done
 
-    # 重新定位新建的分区
-    for p in ${DISK}p*; do
-        [ -b "$p" ] || continue
-        if [ "$(blkid -s PARTLABEL -o value "$p" 2>/dev/null)" = "data" ]; then
-            CAND="$p"
-            break
-        fi
-    done
-
-    if [ -z "$CAND" ]; then
-        log "分区已写入磁盘，但内核尚未识别，重启后自动挂载"
-        reboot
-        exit 0
-    fi
+	# 内核仍未识别：保留脚本（exit 1 不会被删除），下次开机继续
+	if [ -z "$CAND" ]; then
+		log "分区已写入磁盘，但内核尚未识别；重启一次后自动继续"
+		exit 1
+	fi
 fi
 
 log "选定分区 ${CAND}"
@@ -149,16 +157,17 @@ log "选定分区 ${CAND}"
 FSTYPE=$(blkid -s TYPE -o value "$CAND" 2>/dev/null)
 
 if [ -z "$FSTYPE" ]; then
-    if ! command -v mkfs.ext4 >/dev/null 2>&1; then
-        log "缺少 mkfs.ext4（需 e2fsprogs），跳过"
-        exit 0
-    fi
-    log "格式化 ${CAND} 为 ext4，大容量请耐心等待..."
-    if ! mkfs.ext4 -F -b 4096 -L data "$CAND" >/dev/null 2>&1; then
-        log "格式化失败"
-        exit 1
-    fi
-    FSTYPE="ext4"
+	if ! command -v mkfs.ext4 >/dev/null 2>&1; then
+		log "缺少 mkfs.ext4（需 e2fsprogs），跳过"
+		exit 1
+	fi
+	log "格式化 ${CAND} 为 ext4，大容量请耐心等待..."
+	mkfs.ext4 -F -b 4096 -L data "$CAND" >/dev/null 2>&1
+	if [ $? -ne 0 ]; then
+		log "格式化失败"
+		exit 1
+	fi
+	FSTYPE="ext4"
 fi
 
 mkdir -p "$TARGET"
@@ -168,12 +177,12 @@ mkdir -p "$TARGET"
 # ---------------------------------------------------------
 UUID=$(blkid -s UUID -o value "$CAND" 2>/dev/null)
 
-[ -f /etc/config/fstab ] || { mkdir -p /etc/config; touch /etc/config/fstab; }
+[ -f /etc/config/fstab ] || { mkdir -p /etc/config; : > /etc/config/fstab; }
 
 if [ -n "$UUID" ]; then
-    SRC_LINE="set fstab.data.uuid=${UUID}"
+	SRC_LINE="set fstab.data.uuid=${UUID}"
 else
-    SRC_LINE="set fstab.data.device=${CAND}"
+	SRC_LINE="set fstab.data.device=${CAND}"
 fi
 
 uci -q batch >/dev/null 2>&1 <<EOF
@@ -192,13 +201,13 @@ EOF
 # 8. 立即挂载一次
 # ---------------------------------------------------------
 if ! grep -q " ${TARGET} " /proc/mounts; then
-    mount -t "$FSTYPE" -o rw,noatime "$CAND" "$TARGET" >/dev/null 2>&1
+	mount -t "$FSTYPE" -o rw,noatime "$CAND" "$TARGET" >/dev/null 2>&1
 fi
 
 if grep -q " ${TARGET} " /proc/mounts; then
-    log "成功挂载 ${CAND} (${FSTYPE}) 到 ${TARGET}"
-else
-    log "本次挂载未完成，重启后由 fstab 接管"
+	log "成功挂载 ${CAND} (${FSTYPE}) 到 ${TARGET}"
+	exit 0
 fi
 
-exit 0
+log "本次挂载未完成，重启后由 fstab 接管"
+exit 1
