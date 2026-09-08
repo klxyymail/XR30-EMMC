@@ -111,6 +111,9 @@ mkdir -p "$TARGET"
 # ---------------------------------------------------------
 UUID=$(blkid -s UUID -o value "$CAND" 2>/dev/null)
 
+# 确保 fstab 配置文件存在（首次启动时可能尚未生成）
+[ -f /etc/config/fstab ] || { mkdir -p /etc/config; touch /etc/config/fstab; }
+
 if [ -n "$UUID" ]; then
     SRC_LINE="set fstab.data.uuid=${UUID}"
 else
