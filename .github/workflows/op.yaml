@@ -1,4 +1,4 @@
-name: CMCC XR30 eMMC
+name: op
 
 on:
   workflow_dispatch:
