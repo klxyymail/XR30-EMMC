@@ -231,6 +231,34 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
+    - name: 上传配置文件
+      continue-on-error: true
+      env:
+        SOURCE_DIR: ${{ github.workspace }}/openwrt
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -e
+        cp -f "$SOURCE_DIR/.config" defconfig.config
+        mkdir -p /tmp/config-out && cp defconfig.config /tmp/config-out/
+
+        # 用 jq 从文件读取并 base64，避免大字符串进入 argv（单参数上限 128KB）
+        jq -Rs --arg msg "更新 defconfig.config（Actions #${GITHUB_RUN_NUMBER}）" \
+               --arg branch "${GITHUB_REF_NAME}" \
+               '{message:$msg, content:(.|@base64), branch:$branch}' \
+               defconfig.config > /tmp/payload.json
+
+        # 文件已存在则带上 sha 更新，否则新建
+        SHA=$(gh api "repos/${{ github.repository }}/contents/defconfig.config" \
+              --jq .sha 2>/dev/null || echo "")
+        if [ -n "$SHA" ]; then
+          jq --arg sha "$SHA" '. + {sha:$sha}' /tmp/payload.json > /tmp/payload2.json \
+            && mv /tmp/payload2.json /tmp/payload.json
+        fi
+
+        gh api -X PUT "repos/${{ github.repository }}/contents/defconfig.config" \
+          --input /tmp/payload.json >/dev/null
+        echo "defconfig.config 已上传"
+
     - name: BPF/LLVM 早期检查点
       run: |
         cd $SOURCE_NAME
@@ -242,33 +270,15 @@ jobs:
         make target/compile -j2 || yes n | make target/compile -j1 V=s
         make package/kernel/bpf-headers/compile V=s || yes n | make package/kernel/bpf-headers/compile V=s
 
-    - name: 上传配置文件
-      continue-on-error: true
-      env:
-        SOURCE_DIR: ${{ github.workspace }}/openwrt
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      run: |
-        set -e
-        cp -f "$SOURCE_DIR/.config" defconfig.config
-        mkdir -p /tmp/config-out && cp defconfig.config /tmp/config-out/
 
-        # 文件已存在则带上 sha 更新，否则新建
-        SHA=$(gh api "repos/${{ github.repository }}/contents/defconfig.config" \
-              --jq .sha 2>/dev/null || echo "")
-        if [ -n "$SHA" ]; then
-          gh api -X PUT "repos/${{ github.repository }}/contents/defconfig.config" \
-            -f message="更新 defconfig.config（Actions #${GITHUB_RUN_NUMBER}）" \
-            -f content="$(base64 -w0 defconfig.config)" \
-            -f sha="$SHA" \
-            -f branch="${GITHUB_REF_NAME}" >/dev/null
-          echo "defconfig.config 已更新"
-        else
-          gh api -X PUT "repos/${{ github.repository }}/contents/defconfig.config" \
-            -f message="初始化 defconfig.config（Actions #${GITHUB_RUN_NUMBER}）" \
-            -f content="$(base64 -w0 defconfig.config)" \
-            -f branch="${GITHUB_REF_NAME}" >/dev/null
-          echo "defconfig.config 首次上传"
-        fi
+
+    - name: 上传配置文件备份
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: defconfig
+        path: /tmp/config-out/defconfig.config
+        retention-days: 7
 
     - name: 编译固件
       id: compile
