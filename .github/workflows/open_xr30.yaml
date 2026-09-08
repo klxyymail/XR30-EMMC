@@ -37,6 +37,8 @@ jobs:
         include:
           - device: "xr30-emmc-daede"
             config: "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_xr30-emmc=y"
+          - device: "rax3000m-256m-nand"
+            config: "CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_cmcc_rax3000m-256m-nand=y"
 
     steps:
     - name: 检出代码
