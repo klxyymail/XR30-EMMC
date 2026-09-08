@@ -1,0 +1,145 @@
+#!/bin/sh
+#
+# 97-auto-mount-emmc-data
+# 自动挂载 eMMC 上闲置的大分区（XR30 / RAX3000M eMMC 版）
+#
+# 说明：
+#   - 仅在存在 mmcblk* 的 eMMC 设备上执行，NAND 设备自动跳过
+#   - 优先按 PARTLABEL=data 定位（XR30 常见的第 12 个分区，约 57G）
+#     找不到时回退为"最大的未挂载分区"
+#   - 已有文件系统则直接挂载，未格式化才 mkfs.ext4（避免误删数据）
+#   - 写入 /etc/config/fstab，重启后依然生效
+#   - 首次启动执行一次，成功即自动删除；可安全重复运行
+#
+
+TARGET="/mnt/data"
+MIN_GB=1
+
+log() { logger -t auto-mount "$@"; }
+
+# ---------------------------------------------------------
+# 1. 确认是 eMMC 设备（NAND 设备没有 mmcblk*，直接退出）
+# ---------------------------------------------------------
+DISK=""
+for d in /sys/block/mmcblk[0-9]; do
+    [ -d "$d" ] || continue
+    DISK="/dev/$(basename "$d")"
+    break
+done
+
+if [ -z "$DISK" ] || [ ! -b "$DISK" ]; then
+    log "非 eMMC 设备，跳过"
+    exit 0
+fi
+
+# ---------------------------------------------------------
+# 2. 等待内核创建分区节点
+# ---------------------------------------------------------
+i=0
+while [ $i -lt 20 ]; do
+    ls ${DISK}p* >/dev/null 2>&1 && break
+    i=$((i + 1))
+    sleep 1
+done
+
+# ---------------------------------------------------------
+# 3. 已经挂好了就不再处理（幂等）
+# ---------------------------------------------------------
+if grep -q " ${TARGET} " /proc/mounts; then
+    log "${TARGET} 已挂载，跳过"
+    exit 0
+fi
+
+# ---------------------------------------------------------
+# 4. 选定候选分区
+#    优先 PARTLABEL=data；否则取最大的未挂载分区
+# ---------------------------------------------------------
+CAND=""
+for p in ${DISK}p*; do
+    [ -b "$p" ] || continue
+    if [ "$(blkid -s PARTLABEL -o value "$p" 2>/dev/null)" = "data" ]; then
+        CAND="$p"
+        break
+    fi
+done
+
+if [ -z "$CAND" ]; then
+    BEST=0
+    MIN_SECTORS=$((MIN_GB * 2097152))
+    for p in ${DISK}p*; do
+        [ -b "$p" ] || continue
+        grep -q "^${p} " /proc/mounts && continue
+        sz=$(cat /sys/block/$(basename "$DISK")/$(basename "$p")/size 2>/dev/null)
+        [ -n "$sz" ] || continue
+        [ "$sz" -ge "$MIN_SECTORS" ] || continue
+        if [ "$sz" -gt "$BEST" ]; then
+            BEST=$sz
+            CAND=$p
+        fi
+    done
+fi
+
+if [ -z "$CAND" ]; then
+    log "未找到可挂载的闲置分区"
+    exit 0
+fi
+
+log "选定分区 ${CAND}"
+
+# ---------------------------------------------------------
+# 5. 没有文件系统才格式化（有则原样挂载，不破坏数据）
+# ---------------------------------------------------------
+FSTYPE=$(blkid -s TYPE -o value "$CAND" 2>/dev/null)
+
+if [ -z "$FSTYPE" ]; then
+    if ! command -v mkfs.ext4 >/dev/null 2>&1; then
+        log "缺少 mkfs.ext4（需 e2fsprogs），跳过格式化"
+        exit 0
+    fi
+    log "格式化 ${CAND} 为 ext4，大容量请耐心等待..."
+    if ! mkfs.ext4 -F -b 4096 -L data "$CAND" >/dev/null 2>&1; then
+        log "格式化失败"
+        exit 1
+    fi
+    FSTYPE="ext4"
+fi
+
+mkdir -p "$TARGET"
+
+# ---------------------------------------------------------
+# 6. 写入 fstab（开机自动挂载）
+# ---------------------------------------------------------
+UUID=$(blkid -s UUID -o value "$CAND" 2>/dev/null)
+
+if [ -n "$UUID" ]; then
+    SRC_LINE="set fstab.data.uuid=${UUID}"
+else
+    SRC_LINE="set fstab.data.device=${CAND}"
+fi
+
+uci -q batch >/dev/null 2>&1 <<EOF
+delete fstab.data
+set fstab.data=mount
+set fstab.data.enabled=1
+set fstab.data.target=${TARGET}
+set fstab.data.fstype=${FSTYPE}
+set fstab.data.options=rw,noatime
+set fstab.data.enabled_fsck=0
+${SRC_LINE}
+commit fstab
+EOF
+
+# ---------------------------------------------------------
+# 7. 立即挂载一次，本次开机即可用
+# ---------------------------------------------------------
+if ! grep -q " ${TARGET} " /proc/mounts; then
+    mount -t "$FSTYPE" -o rw,noatime "$CAND" "$TARGET" >/dev/null 2>&1
+fi
+
+if grep -q " ${TARGET} " /proc/mounts; then
+    log "成功挂载 ${CAND} (${FSTYPE}) 到 ${TARGET}"
+else
+    log "本次挂载未完成，重启后由 fstab 接管"
+fi
+
+exit 0
