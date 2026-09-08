@@ -1,24 +1,28 @@
 #!/bin/sh
 #
 # 97-auto-mount-emmc-data
-# 自动挂载 eMMC 上闲置的大分区（XR30 / RAX3000M eMMC 版）
+# 自动把 eMMC 上"未分配空间"建成分区并挂载（XR30 / RAX3000M eMMC 版）
 #
-# 说明：
-#   - 仅在存在 mmcblk* 的 eMMC 设备上执行，NAND 设备自动跳过
-#   - 优先按 PARTLABEL=data 定位（XR30 常见的第 12 个分区，约 57G）
-#     找不到时回退为"最大的未挂载分区"
-#   - 已有文件系统则直接挂载，未格式化才 mkfs.ext4（避免误删数据）
-#   - 写入 /etc/config/fstab，重启后依然生效
-#   - 首次启动执行一次，成功即自动删除；可安全重复运行
+# 适用场景：GPT 磁盘上 p1~p6 之后有整块未分配空间（无 data 分区）
+#
+# 首次启动：用 parted 在最大空闲区间建分区 → 重启
+# 再次启动：分区已存在 → 格式化（仅当无文件系统）→ 挂载 → 写 fstab
+#
+# 安全约束：
+#   - 只在 eMMC（mmcblk*）上执行，NAND 机型自动跳过
+#   - 只在"未分配空间"内建分区，绝不触碰 p1~p6（factory/MAC 所在）
+#   - 已有文件系统则原样挂载，绝不格式化
+#   - 可安全重复运行
 #
 
 TARGET="/mnt/data"
-MIN_GB=1
+MIN_MB=512
+LOGTAG="auto-mount"
 
-log() { logger -t auto-mount "$@"; }
+log() { logger -t "$LOGTAG" "$@"; }
 
 # ---------------------------------------------------------
-# 1. 确认是 eMMC 设备（NAND 设备没有 mmcblk*，直接退出）
+# 1. 确认 eMMC 设备
 # ---------------------------------------------------------
 DISK=""
 for d in /sys/block/mmcblk[0-9]; do
@@ -43,7 +47,7 @@ while [ $i -lt 20 ]; do
 done
 
 # ---------------------------------------------------------
-# 3. 已经挂好了就不再处理（幂等）
+# 3. 已挂载则跳过（幂等）
 # ---------------------------------------------------------
 if grep -q " ${TARGET} " /proc/mounts; then
     log "${TARGET} 已挂载，跳过"
@@ -51,8 +55,8 @@ if grep -q " ${TARGET} " /proc/mounts; then
 fi
 
 # ---------------------------------------------------------
-# 4. 选定候选分区
-#    优先 PARTLABEL=data；否则取最大的未挂载分区
+# 4. 寻找现成的候选分区
+#    优先 PARTLABEL=data，否则取最大的未挂载分区
 # ---------------------------------------------------------
 CAND=""
 for p in ${DISK}p*; do
@@ -65,7 +69,7 @@ done
 
 if [ -z "$CAND" ]; then
     BEST=0
-    MIN_SECTORS=$((MIN_GB * 2097152))
+    MIN_SECTORS=$((MIN_MB * 2048))
     for p in ${DISK}p*; do
         [ -b "$p" ] || continue
         grep -q "^${p} " /proc/mounts && continue
@@ -79,21 +83,74 @@ if [ -z "$CAND" ]; then
     done
 fi
 
+# ---------------------------------------------------------
+# 5. 没有现成分区 → 在未分配空间里新建一个
+# ---------------------------------------------------------
 if [ -z "$CAND" ]; then
-    log "未找到可挂载的闲置分区"
-    exit 0
+    if ! command -v parted >/dev/null 2>&1; then
+        log "未找到大分区，且缺少 parted，跳过（请安装 parted）"
+        exit 0
+    fi
+
+    # 取最大的空闲区间（自动忽略中间的小碎片）
+    FREE=$(parted -s -m "$DISK" unit MiB print free 2>/dev/null | awk -F: '
+        /free;$/ {
+            gsub(/MiB/,"",$2); gsub(/MiB/,"",$3);
+            sz = $3 - $2;
+            if (sz > best) { best = sz; s = $2; e = $3 }
+        }
+        END { if (best > 0) printf "%s %s %.0f", s, e, best }
+    ')
+    [ -n "$FREE" ] || { log "无可用未分配空间"; exit 0; }
+
+    START=$(echo "$FREE" | cut -d' ' -f1)
+    END=$(echo "$FREE" | cut -d' ' -f2)
+    SIZE=$(echo "$FREE" | cut -d' ' -f3)
+
+    if [ -z "$SIZE" ] || [ "$SIZE" -lt "$MIN_MB" ]; then
+        log "未分配空间过小（${SIZE}MiB），跳过"
+        exit 0
+    fi
+
+    log "在 ${START}MiB-${END}MiB（${SIZE}MiB）创建 data 分区"
+
+    if ! parted -a optimal -s "$DISK" unit MiB mkpart data ext4 "$START" "$END" 2>/dev/null; then
+        log "创建分区失败"
+        exit 1
+    fi
+
+    # 让内核重读分区表
+    command -v partx >/dev/null 2>&1 && partx -a "$DISK" 2>/dev/null
+    command -v partprobe >/dev/null 2>&1 && partprobe "$DISK" 2>/dev/null
+
+    sleep 3
+
+    # 重新定位新建的分区
+    for p in ${DISK}p*; do
+        [ -b "$p" ] || continue
+        if [ "$(blkid -s PARTLABEL -o value "$p" 2>/dev/null)" = "data" ]; then
+            CAND="$p"
+            break
+        fi
+    done
+
+    if [ -z "$CAND" ]; then
+        log "分区已写入磁盘，但内核尚未识别，重启后自动挂载"
+        reboot
+        exit 0
+    fi
 fi
 
 log "选定分区 ${CAND}"
 
 # ---------------------------------------------------------
-# 5. 没有文件系统才格式化（有则原样挂载，不破坏数据）
+# 6. 没有文件系统才格式化（有则原样挂载，不破坏数据）
 # ---------------------------------------------------------
 FSTYPE=$(blkid -s TYPE -o value "$CAND" 2>/dev/null)
 
 if [ -z "$FSTYPE" ]; then
     if ! command -v mkfs.ext4 >/dev/null 2>&1; then
-        log "缺少 mkfs.ext4（需 e2fsprogs），跳过格式化"
+        log "缺少 mkfs.ext4（需 e2fsprogs），跳过"
         exit 0
     fi
     log "格式化 ${CAND} 为 ext4，大容量请耐心等待..."
@@ -107,11 +164,10 @@ fi
 mkdir -p "$TARGET"
 
 # ---------------------------------------------------------
-# 6. 写入 fstab（开机自动挂载）
+# 7. 写入 fstab（开机自动挂载）
 # ---------------------------------------------------------
 UUID=$(blkid -s UUID -o value "$CAND" 2>/dev/null)
 
-# 确保 fstab 配置文件存在（首次启动时可能尚未生成）
 [ -f /etc/config/fstab ] || { mkdir -p /etc/config; touch /etc/config/fstab; }
 
 if [ -n "$UUID" ]; then
@@ -133,7 +189,7 @@ commit fstab
 EOF
 
 # ---------------------------------------------------------
-# 7. 立即挂载一次，本次开机即可用
+# 8. 立即挂载一次
 # ---------------------------------------------------------
 if ! grep -q " ${TARGET} " /proc/mounts; then
     mount -t "$FSTYPE" -o rw,noatime "$CAND" "$TARGET" >/dev/null 2>&1
