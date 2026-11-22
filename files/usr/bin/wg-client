@@ -1,0 +1,276 @@
+#!/bin/sh
+# =============================================================================
+# wg-client —— 生成 / 刷新 WireGuard 客户端配置（含二维码）
+#
+# 依赖：wireguard-tools、qrencode、jsonfilter（本固件已内置）
+#
+# 用法：
+#   wg-client add phone          新增（或刷新）一个叫 phone 的客户端，全流量回家
+#   wg-client add ipad lan       只让该客户端访问家里内网
+#   wg-client refresh            只更新已有配置里的 Endpoint（不重启网络，供开机调用）
+#   wg-client list               列出已有客户端
+#   wg-client endpoint home.xxx.com   固定 Endpoint（DDNS 域名）
+#   wg-client endpoint auto      清除固定域名，恢复自动探测
+#
+# 产物：
+#   /etc/wireguard/clients/<名字>.conf   客户端配置（导入 WireGuard App）
+#   /etc/wireguard/clients/<名字>.png    二维码（App 扫码导入）
+# =============================================================================
+
+WG_DIR=/etc/wireguard
+CLI_DIR="$WG_DIR/clients"
+SERVER_PUB="$WG_DIR/server.pub"
+
+die()  { echo "[X] $1" >&2; exit 1; }
+info() { echo "[*] $1"; }
+ok()   { echo "[OK] $1"; }
+
+[ -x /usr/bin/wg ] || die "没有 wg 命令，固件缺少 wireguard-tools"
+[ -s "$SERVER_PUB" ] || die "服务端未初始化：执行 xr30-wireguard-setup.sh，或恢复出厂后重启一次"
+
+VPN_PORT="$(uci -q get network.wg0.listen_port)"
+[ -n "$VPN_PORT" ] || VPN_PORT=51820
+
+WG_ADDR="$(uci -q get network.wg0.addresses | awk -F/ '{print $1}' | head -n1)"
+[ -n "$WG_ADDR" ] || WG_ADDR=10.66.66.1
+WG_PREFIX="$(echo "$WG_ADDR" | awk -F. '{printf "%s.%s.%s", $1, $2, $3}')"
+
+LAN_IP="$(uci -q get network.lan.ipaddr)"
+[ -n "$LAN_IP" ] || LAN_IP=192.168.6.1
+LAN_NET="$(echo "$LAN_IP" | awk -F. '{printf "%s.%s.%s.0/24", $1, $2, $3}')"
+
+# ---------------------------------------------------------------------------
+# 探测公网 Endpoint
+# ---------------------------------------------------------------------------
+detect_endpoint() {
+    if [ -s "$WG_DIR/endpoint" ]; then
+        head -n 1 "$WG_DIR/endpoint" | tr -d ' \r\n'
+        return 0
+    fi
+
+    _ip="$(ubus call network.interface.wan status 2>/dev/null \
+        | jsonfilter -e '@["ipv4-address"][0].address' 2>/dev/null | tr -d '" \r\n')"
+    [ -n "$_ip" ] || _ip="$(uci -q get network.wan.ipaddr)"
+
+    if [ -z "$_ip" ]; then
+        _ip="$(wget -q -O - -T 8 https://api.ipify.org 2>/dev/null | tr -d ' \r\n')"
+    fi
+    if [ -z "$_ip" ]; then
+        _ip="$(wget -q -O - -T 8 http://ipv4.icanhazip.com 2>/dev/null | tr -d ' \r\n')"
+    fi
+
+    echo "$_ip"
+}
+
+# 私网 / CGNAT 判断：这类地址外网连不进来
+is_unreachable() {
+    _a="$1"
+    case "$_a" in
+        *:*) return 1 ;;                                  # IPv6 直连一般可达
+        10.*|127.*|192.168.*) return 0 ;;
+        172.1[6-9].*|172.2[0-9].*|172.3[0-1].*) return 0 ;;
+        100.6[4-9].*|100.[7-9][0-9].*|100.1[0-2][0-9].*) return 0 ;;
+        ""|*[!0-9.]*) return 0 ;;
+    esac
+    return 1
+}
+
+# ---------------------------------------------------------------------------
+# 隧道 IP 分配
+# ---------------------------------------------------------------------------
+alloc_ip() {
+    _f="$CLI_DIR/$1.ip"
+    if [ -s "$_f" ]; then
+        cat "$_f"
+        return 0
+    fi
+    _n="$(cat "$WG_DIR/.next_ip" 2>/dev/null)"
+    [ -n "$_n" ] || _n=2
+    echo "$_n" > "$_f"
+    echo $((_n + 1)) > "$WG_DIR/.next_ip"
+    echo "$_n"
+}
+
+# ---------------------------------------------------------------------------
+# 写客户端配置文件
+#   $1=名字  $2=私钥  $3=隧道IP  $4=AllowedIPs
+# ---------------------------------------------------------------------------
+write_conf() {
+    _name="$1"; _priv="$2"; _ip="$3"; _allowed="$4"
+    _ep="$(detect_endpoint)"
+    if [ -z "$_ep" ]; then
+        _ep="你的公网IP或DDNS域名"
+    fi
+    case "$_ep" in
+        *:*) _ep_fmt="[$_ep]" ;;
+        *)   _ep_fmt="$_ep" ;;
+    esac
+
+    _conf="$CLI_DIR/$_name.conf"
+    ( umask 077
+      cat > "$_conf" <<EOF
+[Interface]
+PrivateKey = $_priv
+Address = $_ip/32
+DNS = $LAN_IP
+
+[Peer]
+PublicKey = $(cat "$SERVER_PUB")
+Endpoint = ${_ep_fmt}:${VPN_PORT}
+AllowedIPs = $_allowed
+PersistentKeepalive = 25
+EOF
+    )
+    chmod 600 "$_conf"
+
+    if command -v qrencode >/dev/null 2>&1; then
+        # 注意：提示必须打到 stderr，因为本函数的 stdout 要作为 Endpoint 返回给调用者
+        if qrencode -o "$CLI_DIR/$_name.png" -s 8 -m 2 < "$_conf" 2>/dev/null; then
+            echo "[*] 二维码：$CLI_DIR/$_name.png" >&2
+            # 同时放到 web 目录，手机浏览器直接打开扫码（导入后建议删掉）
+            if [ -d /www ]; then
+                mkdir -p /www/wg 2>/dev/null
+                cp -f "$CLI_DIR/$_name.png" "/www/wg/$_name.png" 2>/dev/null && \
+                    chmod 644 "/www/wg/$_name.png" 2>/dev/null
+                echo "[*] 或手机浏览器打开 http://$LAN_IP/wg/$_name.png 扫码" >&2
+            fi
+        fi
+    fi
+    echo "$_ep"
+}
+
+# ---------------------------------------------------------------------------
+# 子命令：add
+# ---------------------------------------------------------------------------
+cmd_add() {
+    _name="${1:-phone}"
+    _mode="$2"
+    case "$_name" in *[!A-Za-z0-9_-]*) die "客户端名字只能用字母、数字、下划线、横线" ;; esac
+
+    mkdir -p "$CLI_DIR" || die "无法创建 $CLI_DIR"
+    chmod 700 "$WG_DIR" "$CLI_DIR"
+
+    _key="$CLI_DIR/$_name.key"
+    if [ ! -s "$_key" ]; then
+        ( umask 077; wg genkey > "$_key" ) || die "生成客户端密钥失败"
+        chmod 600 "$_key"
+    fi
+    _priv="$(cat "$_key")"
+    _pub="$(printf '%s' "$_priv" | wg pubkey)"
+
+    _n="$(alloc_ip "$_name")"
+    _ip="${WG_PREFIX}.${_n}"
+    echo "$_ip" > "$CLI_DIR/$_name.ip"
+
+    # 写入服务端 peer
+    uci -q delete "network.wg0_${_name}"
+    uci set "network.wg0_${_name}=wireguard_wg0"
+    uci set "network.wg0_${_name}.description=${_name}"
+    uci set "network.wg0_${_name}.public_key=${_pub}"
+    uci add_list "network.wg0_${_name}.allowed_ips=${_ip}/32"
+    uci commit network
+
+    if [ "$_mode" = "lan" ]; then
+        _allowed="$LAN_NET"
+    else
+        _allowed="0.0.0.0/0, ::/0"
+    fi
+
+    _ep="$(write_conf "$_name" "$_priv" "$_ip" "$_allowed")"
+
+    # 让 peer 立即生效。
+    # 优先用 wg set 直接下发（不断网）；只有 wg0 还没起来时才重启网络。
+    # 这样在 hotplug（WAN 拨上）里调用也不会造成网络反复重启。
+    if wg show wg0 >/dev/null 2>&1; then
+        wg set wg0 peer "$_pub" allowed-ips "${_ip}/32" 2>/dev/null || true
+    else
+        /etc/init.d/network reload >/dev/null 2>&1 || true
+        sleep 2
+    fi
+
+    echo ""
+    echo "================ 客户端 $_name ================"
+    cat "$CLI_DIR/$_name.conf"
+    echo "=============================================="
+    echo ""
+    ok "已写入 $CLI_DIR/$_name.conf"
+
+    if [ "$_ep" = "你的公网IP或DDNS域名" ]; then
+        echo "[!] 暂未探测到公网地址，配置里是占位。等 WAN 拨号成功后重跑："
+        echo "    wg-client add $_name"
+    elif is_unreachable "$_ep"; then
+        echo "[!] 探测到的 $_ep 是内网/CGNAT 地址，外网连不进来。"
+        echo "    方案 A：光猫改桥接、路由器 PPPoE 拨号拿公网 IPv4，再在光猫/路由器放行 UDP $VPN_PORT"
+        echo "    方案 B：用本固件已内置的 ZeroTier（LuCI → VPN → ZeroTier）做穿透，无需公网 IP"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 子命令：refresh（只更新 Endpoint，不重启网络）
+# ---------------------------------------------------------------------------
+cmd_refresh() {
+    [ -d "$CLI_DIR" ] || exit 0
+    for _c in "$CLI_DIR"/*.conf; do
+        [ -f "$_c" ] || continue
+        _name="$(basename "$_c" .conf)"
+        _priv="$(sed -n 's/^PrivateKey = //p' "$_c" | head -n1)"
+        _addr="$(sed -n 's/^Address = //p' "$_c" | head -n1)"
+        _ip="${_addr%%/*}"
+        _allowed="$(sed -n 's/^AllowedIPs = //p' "$_c" | head -n1)"
+        [ -n "$_priv" ] || continue
+        _ep="$(write_conf "$_name" "$_priv" "$_ip" "$_allowed")"
+        info "$_name -> $_ep:$VPN_PORT"
+    done
+    exit 0
+}
+
+# ---------------------------------------------------------------------------
+# 子命令：list / endpoint
+# ---------------------------------------------------------------------------
+cmd_list() {
+    if [ ! -d "$CLI_DIR" ] || ! ls "$CLI_DIR"/*.conf >/dev/null 2>&1; then
+        info "还没有客户端，执行 wg-client add <名字> 创建"
+        return 0
+    fi
+    printf '%-10s %-16s %s\n' "Client" "Tunnel IP" "Config File"
+    for _c in "$CLI_DIR"/*.conf; do
+        _name="$(basename "$_c" .conf)"
+        _addr="$(sed -n 's/^Address = //p' "$_c" | head -n1)"
+        printf '%-10s %-16s %s\n' "$_name" "$_addr" "$_c"
+    done
+    echo ""
+    info "实时握手：wg show wg0"
+}
+
+cmd_endpoint() {
+    case "$1" in
+        ""|auto|AUTO)
+            rm -f "$WG_DIR/endpoint"
+            ok "已恢复自动探测；已有客户端请重跑 wg-client add <名字> 更新"
+            ;;
+        *)
+            echo "$1" > "$WG_DIR/endpoint"
+            ok "Endpoint 已固定为 $1（DDNS 域名）"
+            info "已有客户端请重跑 wg-client add <名字> 更新配置"
+            ;;
+    esac
+}
+
+usage() {
+    cat <<EOF
+用法：
+  wg-client add <名字> [lan]       新增/刷新客户端（lan = 只访问内网，默认全流量）
+  wg-client refresh                仅刷新已有配置的 Endpoint
+  wg-client list                   列出客户端
+  wg-client endpoint <域名>        固定 Endpoint（DDNS 域名）
+  wg-client endpoint auto          恢复自动探测
+EOF
+}
+
+case "$1" in
+    add)         cmd_add "$2" "$3" ;;
+    refresh)     cmd_refresh ;;
+    list|ls)     cmd_list ;;
+    endpoint|ep) cmd_endpoint "$2" ;;
+    *)           usage ;;
+esac

@@ -192,6 +192,17 @@ jobs:
       run: |
         [ -e files ] && mv files $SOURCE_NAME/files
         rm -f $SOURCE_NAME/files/etc/uci-defaults/98-install-daed-runfiles
+
+        # 写入固件构建标识，供「固件更新」插件判断是否有新版本。
+        # 必须在 mv files 之后写，否则会被覆盖。用 run_number 单调递增比对。
+        mkdir -p $SOURCE_NAME/files/etc
+        {
+          echo "BUILD_STAMP=$(date +%Y%m%d%H%M)"
+          echo "BUILD_RUN=${{ github.run_number }}"
+          echo "BUILD_SHA=${{ github.sha }}"
+        } > $SOURCE_NAME/files/etc/fwupdate.version
+        echo "构建标识: $(tr '\n' ' ' < $SOURCE_NAME/files/etc/fwupdate.version)"
+
         cat <<EOF >>$SOURCE_NAME/.config
         CONFIG_TARGET_mediatek=y
         CONFIG_TARGET_mediatek_filogic=y

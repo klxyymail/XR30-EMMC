@@ -1,0 +1,48 @@
+#!/bin/sh /etc/rc.common
+#
+# 定时检查固件更新（只检查，不自动升级）
+#
+# 不用 procd：这里只是往 busybox crond 里维护一行任务。
+#
+
+START=99
+STOP=10
+
+CRON_FILE=/etc/crontabs/root
+MARK="/usr/bin/AutoUpdate check"
+
+remove_task() {
+	[ -f "$CRON_FILE" ] || return 0
+	sed -i "\|$MARK|d" "$CRON_FILE" 2>/dev/null
+}
+
+start() {
+	remove_task
+
+	local enable hour minute week
+	enable=$(uci -q get autoupdate.main.enable)
+	[ "$enable" = "1" ] || { [ -x /etc/init.d/cron ] && /etc/init.d/cron restart >/dev/null 2>&1; return 0; }
+
+	hour=$(uci -q get autoupdate.main.hour)
+	minute=$(uci -q get autoupdate.main.minute)
+	week=$(uci -q get autoupdate.main.week)
+	[ -n "$hour" ] || hour=3
+	[ -n "$minute" ] || minute=0
+	[ -n "$week" ] || week=7
+
+	mkdir -p /etc/crontabs
+	if [ "$week" = "7" ]; then
+		echo "$minute $hour * * * $MARK >/dev/null 2>&1" >> "$CRON_FILE"
+	else
+		echo "$minute $hour * * $week $MARK >/dev/null 2>&1" >> "$CRON_FILE"
+	fi
+
+	[ -x /etc/init.d/cron ] && /etc/init.d/cron restart >/dev/null 2>&1
+	return 0
+}
+
+stop() {
+	remove_task
+	[ -x /etc/init.d/cron ] && /etc/init.d/cron restart >/dev/null 2>&1
+	return 0
+}

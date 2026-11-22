@@ -1,0 +1,11 @@
+# 保证 shell 脚本 / Lua / 配置在 Linux 构建环境里始终是 LF，
+# 防止 Windows 检出把 shebang 变成 #!/bin/sh\r 导致脚本失效。
+*.sh           text eol=lf
+*.yml          text eol=lf
+*.yaml         text eol=lf
+*.lua          text eol=lf
+Makefile       text eol=lf
+config-*       text eol=lf
+files/**       text eol=lf
+package/**     text eol=lf
+defconfig.config text eol=lf

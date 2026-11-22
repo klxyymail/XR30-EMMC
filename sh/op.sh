@@ -290,3 +290,20 @@ EOF
 # 替换占位符（此时 shell 变量正常展开）
 sed -i "s/DATE_PLACEHOLDER/$DATE_TAG/" package/base-files/files/etc/banner
 sed -i "s/AUTHOR_PLACEHOLDER/$OP_author/" package/base-files/files/etc/banner
+
+
+# ============================================================
+# 固件更新插件（luci-app-autoupdate）
+# 源码放在本仓库 package/ 下，复制到 OpenWrt 源码树参与编译。
+# 依赖 jsonfilter / uclient-fetch / luci-compat 均为基础或已配置项。
+# ============================================================
+if [ -d "$GITHUB_WORKSPACE/package/luci-app-autoupdate" ]; then
+    rm -rf package/luci-app-autoupdate
+    cp -r "$GITHUB_WORKSPACE/package/luci-app-autoupdate" package/
+    chmod +x package/luci-app-autoupdate/root/usr/bin/AutoUpdate \
+             package/luci-app-autoupdate/root/etc/init.d/autoupdate \
+             package/luci-app-autoupdate/root/etc/uci-defaults/40_luci-app-autoupdate
+    echo "OK: luci-app-autoupdate installed into source tree"
+else
+    echo "WARN: package/luci-app-autoupdate not found" >&2
+fi

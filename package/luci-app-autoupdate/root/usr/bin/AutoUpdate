@@ -1,0 +1,390 @@
+#!/bin/sh
+#
+# luci-app-autoupdate —— 固件更新检测与下载
+#
+# 用法:
+#   AutoUpdate check    检查 GitHub 上是否有比本机更新的构建
+#   AutoUpdate fetch    下载最新固件到 /tmp/fwupdate 并校验 sha256
+#   AutoUpdate status   输出当前状态（页面轮询用，也可 SSH 手工查看）
+#
+# 设计说明（与原版 luci-app-autoupdate 的差异）:
+#   原版通过「文件名内嵌 10 位时间戳 + 6 位哈希」来判断版本与完整性，
+#   那是 AutoBuild-Actions 的私有约定。本仓库用的是 ImmortalWrt 标准命名
+#   （immortalwrt-<target>-<device>-squashfs-sysupgrade.bin），文件名里
+#   既没有时间戳也没有哈希，所以改为：
+#     版本判断 —— 比对 GitHub Actions 最新成功构建的 run_number
+#                 （本机 run_number 在构建时写入 /etc/fwupdate.version）
+#     完整性   —— 用 Release 里的 sha256sums 文件校验，比文件名哈希可靠
+#   同时去掉了原版对 jq / bc 的依赖，改用固件自带的 jsonfilter。
+#
+
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+CONF=autoupdate
+TMP=/tmp/fwupdate
+STATUS=/tmp/autoupdate_status
+LOG=/tmp/autoupdate.log
+VERFILE=/etc/fwupdate.version
+
+LOG_MAX=262144
+
+# ---------------------------------------------------------------- 基础工具
+
+cfg() {
+    uci -q get "autoupdate.main.$1" 2>/dev/null
+}
+
+logline() {
+    [ -f "$LOG" ] && [ "$(wc -c < "$LOG" 2>/dev/null || echo 0)" -gt "$LOG_MAX" ] && mv -f "$LOG" "$LOG.old" 2>/dev/null
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null
+}
+
+is_num() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# http_get <url> <outfile> [timeout]
+# 优先 uclient-fetch（OpenWrt 原生），失败再退到 wget-ssl
+http_get() {
+    local url out tmo
+    url="$1"
+    out="$2"
+    tmo="${3:-15}"
+
+    : > "$out" 2>/dev/null
+
+    if command -v uclient-fetch >/dev/null 2>&1; then
+        uclient-fetch -q -T "$tmo" -O "$out" "$url" >/dev/null 2>&1
+        [ -s "$out" ] && return 0
+    fi
+    if command -v wget >/dev/null 2>&1; then
+        wget -q -T "$tmo" -O "$out" "$url" >/dev/null 2>&1
+        [ -s "$out" ] && return 0
+    fi
+    return 1
+}
+
+# jget <file> <jsonfilter-expression>
+jget() {
+    jsonfilter -i "$1" -e "$2" 2>/dev/null
+}
+
+load_local() {
+    BUILD_RUN=""
+    BUILD_STAMP=""
+    BUILD_SHA=""
+    if [ -f "$VERFILE" ]; then
+        . "$VERFILE"
+    fi
+    LOCAL_RUN="$BUILD_RUN"
+    LOCAL_STAMP="$BUILD_STAMP"
+    LOCAL_SHA="$BUILD_SHA"
+}
+
+write_status() {
+    mkdir -p "$TMP"
+    {
+        echo "TIME=$(date '+%Y-%m-%d %H:%M:%S')"
+        echo "RESULT=${RESULT:-error}"
+        echo "MESSAGE=${MESSAGE:-}"
+        echo "LOCAL_RUN=${LOCAL_RUN:-}"
+        echo "LOCAL_STAMP=${LOCAL_STAMP:-}"
+        echo "REMOTE_RUN=${REMOTE_RUN:-}"
+        echo "TAG=${TAG:-}"
+        echo "ASSET=${ASSET:-}"
+        echo "SIZE=${SIZE:-}"
+        echo "URL=${URL:-}"
+        echo "FILE=${FILE:-}"
+        echo "DOWNLOADED=${DOWNLOADED:-0}"
+        echo "SHA_OK=${SHA_OK:-}"
+    } > "$STATUS.tmp" 2>/dev/null && mv -f "$STATUS.tmp" "$STATUS" 2>/dev/null
+}
+
+get_status() {
+    # 读 status 里的某个键
+    sed -n "s/^$1=//p" "$STATUS" 2>/dev/null | head -n1
+}
+
+# ---------------------------------------------------------------- 设备与仓库
+
+detect_device() {
+    local dev
+    dev=$(cfg device_model)
+    if [ -n "$dev" ] && [ "$dev" != "auto" ]; then
+        printf '%s' "$dev"
+        return 0
+    fi
+    # board_name 形如 cmcc,xr30-emmc，Release 里的资产名是 cmcc_xr30-emmc
+    cat /tmp/sysinfo/board_name 2>/dev/null | tr 'A-Z,' 'a-z_'
+}
+
+repo_slug() {
+    # 允许用户填 https://github.com/owner/repo 或 owner/repo
+    printf '%s' "$1" | sed -e 's|^https\{0,1\}://||' -e 's|^github\.com/||' \
+        -e 's|/$||' -e 's|\.git$||'
+}
+
+api_base() {
+    local api
+    api=$(cfg api_base)
+    [ -n "$api" ] || api="https://api.github.com"
+    printf '%s' "${api%/}"
+}
+
+proxy_prefix() {
+    printf '%s' "$(cfg github_proxy)"
+}
+
+# 拼下载地址（直链；走代理时在调用处加前缀）
+build_url() {
+    printf 'https://github.com/%s/releases/download/%s/%s' "$1" "$2" "$3"
+}
+
+# ---------------------------------------------------------------- check
+
+do_check() {
+    local repo api wf runs rel dev suffix url names sizes idx
+    local asset size tag
+
+    RESULT=error
+    MESSAGE=""
+    TAG=""
+    ASSET=""
+    SIZE=""
+    URL=""
+    REMOTE_RUN=""
+    FILE=""
+    DOWNLOADED=0
+    SHA_OK=""
+
+    load_local
+
+    repo=$(repo_slug "$(cfg github)")
+    api=$(api_base)
+    wf=$(cfg workflow)
+    [ -n "$wf" ] || wf="build-openwrt.yml"
+
+    if [ -z "$repo" ]; then
+        MESSAGE="尚未配置 GitHub 仓库地址，请在上方填写 owner/repo"
+        write_status
+        return 1
+    fi
+
+    mkdir -p "$TMP"
+    runs="$TMP/runs.json"
+    rel="$TMP/rel.json"
+
+    # 第一步：最新一次成功构建的 run_number
+    url="${api}/repos/${repo}/actions/workflows/${wf}/runs?status=success&per_page=1"
+    logline "查询 runs: $url"
+    if ! http_get "$url" "$runs" 15; then
+        MESSAGE="无法访问 GitHub API（${api}）。请确认路由器能正常访问外网；若网络受限，可在下方填写可用的 GitHub 代理。"
+        write_status
+        return 1
+    fi
+
+    REMOTE_RUN=$(jget "$runs" '@.workflow_runs[0].run_number')
+    if ! is_num "$REMOTE_RUN"; then
+        MESSAGE="GitHub 返回内容异常：可能触发了访问频率限制（每小时 60 次），或仓库地址 / workflow 名称有误。"
+        write_status
+        return 1
+    fi
+
+    # 第二步：比对本机构建编号
+    if is_num "$LOCAL_RUN"; then
+        if [ "$REMOTE_RUN" -le "$LOCAL_RUN" ]; then
+            RESULT=none
+            MESSAGE="已是最新版本"
+            write_status
+            return 0
+        fi
+    else
+        # 老固件没有版本标识（升级前编出来的），一律视为可更新
+        logline "本机无版本标识，按可更新处理"
+    fi
+
+    # 第三步：取最新 Release，定位本设备的固件与大小
+    url="${api}/repos/${repo}/releases/latest"
+    logline "查询 release: $url"
+    if ! http_get "$url" "$rel" 15; then
+        MESSAGE="检测到更新的构建（#${REMOTE_RUN}），但获取 Release 信息失败，请稍后重试。"
+        write_status
+        return 1
+    fi
+
+    tag=$(jget "$rel" '@.tag_name')
+    if [ -z "$tag" ]; then
+        MESSAGE="该仓库还没有发布 Release，或 Release 信息读取失败。"
+        write_status
+        return 1
+    fi
+    TAG="$tag"
+
+    dev=$(detect_device)
+    suffix=$(cfg firmware_suffix)
+    [ -n "$suffix" ] || suffix="-squashfs-sysupgrade.bin"
+
+    # 设备名必须能确定，绝不退化成「只按后缀匹配」——
+    # 同一个 Release 里同时有 cmcc_rax3000m-nand-mtk 和 cmcc_xr30-emmc 两个镜像，
+    # 只按后缀匹配会随便挑一个，刷错直接变砖。
+    if [ -z "$dev" ]; then
+        MESSAGE="无法识别本机设备型号。请在「设备标识」里手动填写 Release 资产名中的设备段（例如 cmcc_xr30-emmc），或在 SSH 里执行 cat /tmp/sysinfo/board_name 查看。"
+        write_status
+        return 1
+    fi
+
+    names=$(jget "$rel" '@.assets[*].name')
+    sizes=$(jget "$rel" '@.assets[*].size')
+
+    idx=$(printf '%s\n' "$names" | grep -n -- "${dev}${suffix}\$" | head -n1 | cut -d: -f1)
+
+    if [ -z "$idx" ]; then
+        MESSAGE="检测到更新的构建（#${REMOTE_RUN}），但 Release「${tag}」里没有匹配设备 ${dev} 的固件文件。"
+        write_status
+        return 1
+    fi
+
+    asset=$(printf '%s\n' "$names" | sed -n "${idx}p")
+    size=$(printf '%s\n' "$sizes" | sed -n "${idx}p")
+
+    ASSET="$asset"
+    SIZE="$size"
+    URL=$(build_url "$repo" "$tag" "$asset")
+
+    RESULT=update
+    MESSAGE="发现新版本"
+    logline "发现更新: run ${LOCAL_RUN:-?} -> ${REMOTE_RUN}, asset=${asset}"
+    write_status
+    return 0
+}
+
+# ---------------------------------------------------------------- fetch
+
+do_fetch() {
+    local url asset tag size proxy dl got want sums avail need available_kb
+    local tmpf
+
+    RESULT=error
+    MESSAGE=""
+    LOCAL_RUN=$(get_status LOCAL_RUN)
+    LOCAL_STAMP=$(get_status LOCAL_STAMP)
+    REMOTE_RUN=$(get_status REMOTE_RUN)
+    TAG=$(get_status TAG)
+    ASSET=$(get_status ASSET)
+    SIZE=$(get_status SIZE)
+    URL=$(get_status URL)
+    FILE=""
+    DOWNLOADED=0
+    SHA_OK=""
+
+    if [ -z "$URL" ] || [ -z "$ASSET" ]; then
+        MESSAGE="没有待下载的固件，请先点击「检查更新」"
+        write_status
+        return 1
+    fi
+
+    mkdir -p "$TMP"
+    tmpf="$TMP/$ASSET"
+
+    # /tmp 空间检查：需要 1.2 倍固件大小
+    avail=$(df -k /tmp 2>/dev/null | awk 'NR==2 {print $4}')
+    if is_num "$avail" && is_num "$SIZE"; then
+        need=$(( SIZE / 1024 * 12 / 10 ))
+        if [ "$avail" -lt "$need" ]; then
+            MESSAGE="下载空间不足：/tmp 剩余 $((avail/1024))MB，需要约 $((need/1024))MB"
+            write_status
+            return 1
+        fi
+    fi
+
+    # 先落状态，页面能立刻看到「下载中」
+    FILE="$tmpf"
+    RESULT=downloading
+    MESSAGE="正在下载固件"
+    write_status
+
+    proxy=$(proxy_prefix)
+    dl="$URL"
+    if [ -n "$proxy" ]; then
+        dl="${proxy%/}${URL}"
+    fi
+
+    rm -f "$tmpf"
+    logline "下载: $dl"
+
+    if command -v uclient-fetch >/dev/null 2>&1; then
+        uclient-fetch -q -T 600 -O "$tmpf" "$dl" >>"$LOG" 2>&1
+    else
+        wget -q -T 600 -O "$tmpf" "$dl" >>"$LOG" 2>&1
+    fi
+
+    if [ ! -s "$tmpf" ]; then
+        MESSAGE="下载失败：文件为空。可能是网络中断或代理不可用（${dl}）"
+        RESULT=error
+        rm -f "$tmpf"
+        write_status
+        return 1
+    fi
+
+    got=$(wc -c < "$tmpf")
+    DOWNLOADED="$got"
+    logline "下载完成: $got 字节"
+
+    # 完整性校验：用 Release 里的 sha256sums
+    sums="$TMP/sha256sums"
+    if http_get "$(build_url "$(repo_slug "$(cfg github)")" "$TAG" "sha256sums")" "$sums" 20; then
+        want=$(awk -v f="$ASSET" '$2 == f || $2 == "*"f { print $1; exit }' "$sums")
+        if [ -n "$want" ]; then
+            got_sha=$(sha256sum "$tmpf" 2>/dev/null | cut -d' ' -f1)
+            if [ "$want" = "$got_sha" ]; then
+                SHA_OK=1
+                logline "sha256 校验通过"
+            else
+                SHA_OK=0
+                MESSAGE="sha256 校验失败（期望 ${want}，实际 ${got_sha}），文件已删除，请重试"
+                RESULT=error
+                rm -f "$tmpf"
+                FILE=""
+                write_status
+                return 1
+            fi
+        else
+            SHA_OK=skip
+            logline "sha256sums 中未找到 $ASSET 的条目，跳过校验"
+        fi
+    else
+        SHA_OK=skip
+        logline "sha256sums 下载失败，跳过校验"
+    fi
+
+    RESULT=ready
+    MESSAGE="固件已下载完成"
+    write_status
+    return 0
+}
+
+# ---------------------------------------------------------------- status
+
+do_status() {
+    if [ -f "$STATUS" ]; then
+        cat "$STATUS"
+    else
+        echo "RESULT=idle"
+        echo "MESSAGE=尚未检查"
+    fi
+}
+
+# ---------------------------------------------------------------- 入口
+
+case "$1" in
+    check)  do_check  ;;
+    fetch)  do_fetch  ;;
+    status) do_status ;;
+    *)
+        echo "用法: $0 check|fetch|status" >&2
+        exit 1
+        ;;
+esac

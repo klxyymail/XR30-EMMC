@@ -1,0 +1,97 @@
+#!/bin/sh
+# =============================================================================
+# 首次启动自动创建 WireGuard「回家」隧道（wg0）
+#
+# 放在 /etc/uci-defaults/ 下，由 rcS 在首次启动时执行一次（执行后自动删除）。
+# 已经存在 /etc/wireguard/server.key 时直接退出，避免二次运行覆盖已有密钥。
+#
+# 生成的东西：
+#   /etc/wireguard/server.key|server.pub   服务端密钥
+#   /etc/config/network                    wg0 接口（10.66.66.1/24, UDP 51820）
+#   /etc/config/firewall                   vpn 区域 + 双向转发 + WAN 放行 UDP
+#
+# 客户端配置由 /usr/bin/wg-client 生成（WAN 起来后由 hotplug 触发）。
+# =============================================================================
+
+WG_DIR=/etc/wireguard
+VPN_PORT=51820
+VPN_NET=10.66.66
+
+# 没有 wg 命令说明固件没编进 wireguard-tools，直接放弃
+[ -x /usr/bin/wg ] || exit 0
+
+# 已有密钥就不再重建
+[ -s "$WG_DIR/server.key" ] && exit 0
+
+# 用户自己已经配过 wg0（比如保留配置升级），不要动它
+if uci -q get network.wg0 >/dev/null 2>&1; then
+    logger -t wg-defaults "已存在 wg0 接口，跳过自动创建"
+    exit 0
+fi
+
+mkdir -p "$WG_DIR/clients" || exit 1
+chmod 700 "$WG_DIR" "$WG_DIR/clients"
+
+umask 077
+if ! wg genkey > "$WG_DIR/server.key" 2>/dev/null; then
+    logger -t wg-defaults "生成服务端密钥失败，跳过 WireGuard 自动配置"
+    exit 0
+fi
+wg pubkey < "$WG_DIR/server.key" > "$WG_DIR/server.pub" 2>/dev/null
+chmod 600 "$WG_DIR/server.key"
+chmod 644 "$WG_DIR/server.pub"
+
+LAN_IP="$(uci -q get network.lan.ipaddr)"
+[ -n "$LAN_IP" ] || LAN_IP=192.168.6.1
+LAN_NET="$(echo "$LAN_IP" | awk -F. '{printf "%s.%s.%s.0/24", $1, $2, $3}')"
+
+# ---------- 1. wg0 接口 ----------
+uci -q delete network.wg0
+uci set network.wg0='interface'
+uci set network.wg0.proto='wireguard'
+uci set network.wg0.private_key="$(cat "$WG_DIR/server.key")"
+uci set network.wg0.listen_port="$VPN_PORT"
+# MTU 1380：走 PPPoE 也不容易分片；家宽直连同样安全
+uci set network.wg0.mtu='1380'
+uci add_list network.wg0.addresses="${VPN_NET}.1/24"
+
+# ---------- 2. 防火墙区域 ----------
+uci -q delete firewall.vpn
+uci set firewall.vpn='zone'
+uci set firewall.vpn.name='vpn'
+uci set firewall.vpn.input='ACCEPT'
+uci set firewall.vpn.output='ACCEPT'
+uci set firewall.vpn.forward='ACCEPT'
+uci set firewall.vpn.masq='1'
+uci set firewall.vpn.mtu_fix='1'
+uci add_list firewall.vpn.network='wg0'
+
+# VPN -> LAN（访问内网设备）
+uci -q delete firewall.vpn_to_lan
+uci set firewall.vpn_to_lan='forwarding'
+uci set firewall.vpn_to_lan.src='vpn'
+uci set firewall.vpn_to_lan.dest='lan'
+
+# LAN -> VPN（内网设备回包）
+uci -q delete firewall.lan_to_vpn
+uci set firewall.lan_to_vpn='forwarding'
+uci set firewall.lan_to_vpn.src='lan'
+uci set firewall.lan_to_vpn.dest='vpn'
+
+# ---------- 3. WAN 侧放行 UDP 端口（缺这条外网根本连不进来） ----------
+uci -q delete firewall.wg_wan
+uci set firewall.wg_wan='rule'
+uci set firewall.wg_wan.name='Allow-WireGuard'
+uci set firewall.wg_wan.src='wan'
+uci set firewall.wg_wan.proto='udp'
+uci set firewall.wg_wan.dest_port="$VPN_PORT"
+uci set firewall.wg_wan.target='ACCEPT'
+
+uci commit network
+uci commit firewall
+
+# ---------- 4. 记录内网信息，供 wg-client 生成客户端配置 ----------
+echo "$LAN_NET" > "$WG_DIR/lan.net"
+
+logger -t wg-defaults "WireGuard 服务端已创建：wg0 ${VPN_NET}.1/24, UDP ${VPN_PORT}"
+exit 0

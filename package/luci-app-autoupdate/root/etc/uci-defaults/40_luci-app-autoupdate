@@ -1,0 +1,30 @@
+#!/bin/sh
+# 首次安装 / 保留配置升级时补齐必要字段，避免脚本读到空值
+
+[ -f /etc/config/autoupdate ] || exit 0
+
+set_default() {
+	local cur
+	cur=$(uci -q get "autoupdate.main.$1")
+	if [ -z "$cur" ]; then
+		uci set "autoupdate.main.$1=$2"
+	fi
+}
+
+# 保留配置升级时，旧配置里可能没有这些字段
+uci -q get autoupdate.main >/dev/null 2>&1 || {
+	uci set autoupdate.main=login
+}
+
+set_default github 'klxyymail/immortalwrt-cmcc_rax3000m-emmc-237'
+set_default api_base 'https://api.github.com'
+set_default device_model 'auto'
+set_default firmware_suffix '-squashfs-sysupgrade.bin'
+set_default workflow 'build-openwrt.yml'
+set_default week '7'
+set_default hour '3'
+set_default minute '0'
+
+uci commit autoupdate 2>/dev/null
+
+exit 0

@@ -1,0 +1,21 @@
+#!/bin/sh
+# WAN 拨号成功后：生成/刷新 WireGuard 客户端配置
+#
+# 首次刷机时 uci-defaults 早于 netifd 执行，拿不到公网地址，
+# 所以客户端配置放到这里生成 —— 此时 WAN 已经有 IP 了。
+
+[ "$ACTION" = "ifup" ] || exit 0
+case "$INTERFACE" in
+    wan|wan6|pppoe-wan) ;;
+    *) exit 0 ;;
+esac
+[ -x /usr/bin/wg-client ] || exit 0
+
+if ls /etc/wireguard/clients/*.conf >/dev/null 2>&1; then
+    # 已有配置：只更新 Endpoint（不会重启网络）
+    /usr/bin/wg-client refresh >/dev/null 2>&1 &
+else
+    # 还没有客户端：自动建一个默认的 phone（全流量回家）
+    /usr/bin/wg-client add phone >/dev/null 2>&1 &
+fi
+exit 0
