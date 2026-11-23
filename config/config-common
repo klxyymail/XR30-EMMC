@@ -313,3 +313,8 @@ CONFIG_PACKAGE_luci-app-autoupdate=y
 ###   harbor-file-pro -> harbor-file（已编入）
 ###   passwall 的 Shadowsocks_Rust_Server/V2ray_Geoview
 ###                   -> 已由 Rust_Client/Geoview include 覆盖
+
+### 内核 6.12.116 新增 AIR_EN8811H_PHY_DEBUGFS 配置项。
+### 不选它时非交互 syncconfig 会因 (NEW) 选项报错、target/linux 编译失败。
+### 显式设为 n，避免「重启配置」卡住。
+# CONFIG_KERNEL_AIR_EN8811H_PHY_DEBUGFS is not set

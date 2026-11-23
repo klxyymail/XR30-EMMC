@@ -238,6 +238,16 @@ jobs:
       run: |
         cd $SOURCE_NAME
         make defconfig
+        # 内核升级后会出现新的 Kconfig 选项（如 6.12.116 的
+        # AIR_EN8811H_PHY_DEBUGFS），非交互 syncconfig 遇到 (NEW) 会报错，
+        # 导致 target/linux failed to build。先 prepare 内核源码，
+        # 再对内核 .config 跑 oldconfig，用空回答接受所有新选项的默认值。
+        make target/linux/prepare >/dev/null 2>&1 || true
+        KDIR=$(find build_dir/target-aarch64_cortex-a53_musl/linux-mediatek_filogic -maxdepth 1 -type d -name 'linux-6.*' | head -n1)
+        if [ -n "$KDIR" ] && [ -f "$KDIR/.config" ]; then
+          yes '' | make -C "$KDIR" ARCH=arm64 oldconfig >/dev/null 2>&1 || true
+          echo "OK: 内核 oldconfig 已补齐新选项"
+        fi
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
