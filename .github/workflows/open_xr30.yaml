@@ -127,7 +127,9 @@ jobs:
         # tag 移动到了新 commit，内核从 6.12.94 变成 6.12.116，引入
         # AIR_EN8811H_PHY_DEBUGFS 等新 Kconfig 选项，导致 syncconfig 失败、
         # 构建连续多轮失败。锁定 commit 让构建稳定可复现。
-        PINNED_COMMIT="827758a693"
+        PINNED_COMMIT="827758a693d4cd5575dc769353ad56409b1af4a6"
+        # 上游移动了 tag，旧 commit 不在默认分支历史里，必须显式 fetch。
+        git fetch --depth 1 origin "$PINNED_COMMIT" 2>/dev/null || true
         if git cat-file -e "${PINNED_COMMIT}^{commit}" 2>/dev/null; then
           git checkout "$PINNED_COMMIT"
           echo "release_tag=v25.12.5-pinned-${PINNED_COMMIT}" >> $GITHUB_ENV
