@@ -157,6 +157,21 @@ RUST_VERSION=1.95.0
 RUST_HASH=62b67230754da642a264ca0cb9fc08820c54e2ed7b3baba0289876d4cdb48c08
 sed -ri "s/(PKG_VERSION:=)[^\"]*/\1$RUST_VERSION/;s/(PKG_HASH:=)[^\"]*/\1$RUST_HASH/" feeds/packages/lang/rust/Makefile
 
+# =========================================================
+# 【关键修复】EN8811H DEBUGFS 子选项未声明导致 syncconfig 失败
+# 内核 6.12.116 新增 CONFIG_AIR_EN8811H_PHY_DEBUGFS（依赖
+# AIR_EN8811H_PHY=m），但 OpenWrt 的 KernelPackage/phy-airoha-en8811h
+# 只声明了 KCONFIG:=CONFIG_AIR_EN8811H_PHY，漏掉该子选项，
+# 导致它不进 .config.set、syncconfig 认成 (NEW) 报错，
+# target/linux failed to build。
+# 这里把子选项补进 KCONFIG 声明，OpenWrt 就会把它写入 .config.set。
+# =========================================================
+NETDEV_MK="package/kernel/linux/modules/netdevices.mk"
+if [ -f "$NETDEV_MK" ] && grep -q "CONFIG_AIR_EN8811H_PHY$" "$NETDEV_MK"; then
+    sed -i 's|KCONFIG:=CONFIG_AIR_EN8811H_PHY$|KCONFIG:=CONFIG_AIR_EN8811H_PHY CONFIG_AIR_EN8811H_PHY_DEBUGFS|' "$NETDEV_MK"
+    echo "OK: 已把 AIR_EN8811H_PHY_DEBUGFS 加入 KCONFIG 声明"
+fi
+
 # 禁用 rust 的 CI 模式（把警告当错误会导致编译失败）。
 # 原 001-rust-disable-ci-mode.patch 因上游新增 RUSTC_TARGET_RUSTFLAGS 行、行号
 # 从 72 变 88 而失效，改用 sed 在 --build-dir 行后插入 --ci false，不依赖行号。

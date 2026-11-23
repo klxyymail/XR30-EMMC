@@ -316,5 +316,6 @@ CONFIG_PACKAGE_luci-app-autoupdate=y
 
 ### 内核 6.12.116 新增 AIR_EN8811H_PHY_DEBUGFS 配置项。
 ### 不选它时非交互 syncconfig 会因 (NEW) 选项报错、target/linux 编译失败。
-### 显式设为 n，避免「重启配置」卡住。
-# CONFIG_KERNEL_AIR_EN8811H_PHY_DEBUGFS is not set
+### 配合 op.sh 把该子选项补进 KCONFIG 声明后，这里显式设为 n 写入
+### .config.set，避免 syncconfig 认成 (NEW) 卡住（debugfs 非必需）。
+CONFIG_KERNEL_AIR_EN8811H_PHY_DEBUGFS=n
