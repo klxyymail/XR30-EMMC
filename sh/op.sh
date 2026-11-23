@@ -244,8 +244,11 @@ git clone --depth=1 https://github.com/sbwml/packages_lang_golang -b 26.x feeds/
 # 【新增】第三方 LuCI 应用（iStore + 集客AC + tcpdump + Harbor File）
 # =========================================================
 # iStore 软件中心
+# 锁定到已验证可编译的 commit（Makefile 版本 0.2.1-r1，与成功固件 #18 一致），
+# 避免裸拉 master 漂移导致某天上游改动让固件编译失败。
 rm -rf package/luci-app-store
-git clone --depth=1 https://github.com/linkease/istore.git package/luci-app-store
+git clone https://github.com/linkease/istore.git package/luci-app-store
+git -C package/luci-app-store checkout a97ace34f2da358a015b094d326bba2697697f2e
 
 # 集客 AC 控制器
 rm -rf package/luci-app-gecoosac
