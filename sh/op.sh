@@ -132,6 +132,10 @@ for patch in *.patch; do
         echo "Skipping $patch: JCG Q30 PRO profile is managed by sh/op.sh"
         continue
     fi
+    if [ "$patch" = "001-rust-disable-ci-mode.patch" ]; then
+        echo "Skipping $patch: 上游 rust Makefile 已变更，改用 sed 注入 --ci false"
+        continue
+    fi
 
     echo "Applying $patch ..."
     patch -p1 --no-backup-if-mismatch < "$patch" || {
@@ -146,6 +150,15 @@ done
 RUST_VERSION=1.95.0
 RUST_HASH=62b67230754da642a264ca0cb9fc08820c54e2ed7b3baba0289876d4cdb48c08
 sed -ri "s/(PKG_VERSION:=)[^\"]*/\1$RUST_VERSION/;s/(PKG_HASH:=)[^\"]*/\1$RUST_HASH/" feeds/packages/lang/rust/Makefile
+
+# 禁用 rust 的 CI 模式（把警告当错误会导致编译失败）。
+# 原 001-rust-disable-ci-mode.patch 因上游新增 RUSTC_TARGET_RUSTFLAGS 行、行号
+# 从 72 变 88 而失效，改用 sed 在 --build-dir 行后插入 --ci false，不依赖行号。
+RUST_MK="feeds/packages/lang/rust/Makefile"
+if grep -q -- '--build-dir' "$RUST_MK" && ! grep -q -- '--ci false' "$RUST_MK"; then
+    sed -i '/--build-dir/a\		--ci false \\' "$RUST_MK"
+    echo "OK: rust --ci false 已注入"
+fi
 
 # fstools
 rm -rf package/system/fstools
