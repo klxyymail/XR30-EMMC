@@ -105,7 +105,6 @@ jobs:
         cd .. 
         [ -e patch ] && cp -rf patch/diy/*.patch $SOURCE_NAME
         [ -e patch ] && cp -rf patch/luci/*.patch $SOURCE_NAME/feeds/luci
-        [ -e patch ] && cp -rf patch/keys/* $SOURCE_NAME
         
     - name: 加载自定义脚本
       run: |
@@ -165,25 +164,6 @@ jobs:
         rm -rf *.sha
         rm -rf sha256sums
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        
-    - name: 签名
-      run: |
-        cd $SOURCE_NAME
-        bash kmod-sign bin/packages/aarch64_cortex-a53/base
-        bash kmod-sign bin/packages/aarch64_cortex-a53/kmod
-        bash kmod-sign bin/packages/aarch64_cortex-a53/luci
-        bash kmod-sign bin/packages/aarch64_cortex-a53/packages
-
-    - name: 上传apk
-      env:
-        GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-      run: |
-        cd $SOURCE_NAME/bin/packages
-        git init
-        git config --local user.name "github-actions[bot]"
-        git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
-        git add .
-        git commit -m "${{ env.tag }}"
-        git branch -M main
-        git remote add origin https://github-action:$GITHUB_TOKEN@github.com/shiyu1314/rax3000m
-        git push -u origin main --force
+        # 已移除自建 apk 源的签名与上传步骤：原流程用明文私钥给包签名后
+        # 推送到外部源，私钥曾明文提交在公开仓库，存在安全隐患。所有插件
+        # 现已编译进固件，不再依赖外部 apk 源。保留编译步骤供本地验证。
