@@ -123,17 +123,21 @@ jobs:
     - name: 检出源码标签
       run: |
         cd $SOURCE_NAME
-        case $REPO_BRANCH in
-          openwrt-25.12)
-            _release_tag=$(git tag --sort=taggerdate --list 'v25.*' | tail -1)
-            git checkout $_release_tag
-            ;;
-          *)
-            echo "Can't get local/upstream branch or tag"
-            exit 1
-            ;;
-        esac
-        echo "release_tag=$_release_tag" >> $GITHUB_ENV
+        # 固定到 #18（2026-09-09）验证成功的 commit。上游把 v25.12.5 这个
+        # tag 移动到了新 commit，内核从 6.12.94 变成 6.12.116，引入
+        # AIR_EN8811H_PHY_DEBUGFS 等新 Kconfig 选项，导致 syncconfig 失败、
+        # 构建连续多轮失败。锁定 commit 让构建稳定可复现。
+        PINNED_COMMIT="827758a693"
+        if git cat-file -e "${PINNED_COMMIT}^{commit}" 2>/dev/null; then
+          git checkout "$PINNED_COMMIT"
+          echo "release_tag=v25.12.5-pinned-${PINNED_COMMIT}" >> $GITHUB_ENV
+          echo "OK: 已锁定源码到验证成功的 commit $PINNED_COMMIT（内核 6.12.94）"
+        else
+          echo "WARN: 固定 commit 不存在，回退到最新 tag"
+          _release_tag=$(git tag --sort=taggerdate --list 'v25.*' | tail -1)
+          git checkout $_release_tag
+          echo "release_tag=$_release_tag" >> $GITHUB_ENV
+        fi
 
     - name: 恢复构建缓存
       id: build-cache
