@@ -243,6 +243,11 @@ jobs:
         find dl -size -1024c -exec rm -f {} \;
 
     - name: BPF/LLVM 早期检查点
+      # 这是「提前发现 BPF/LLVM 问题」的可选预检查，不是编译固件本身。
+      # 上游内核新增配置项（如 AIR_EN8811H_PHY_DEBUGFS）时，非交互的
+      # syncconfig 会因 (NEW) 选项失败，导致整个构建被这个预检查阻塞。
+      # 改为失败不中止，让流程进入正式编译步骤。
+      continue-on-error: true
       run: |
         cd $SOURCE_NAME
         trap 'echo "::group::BPF checkpoint diagnostics"; find staging_dir -maxdepth 4 \( -path "*/toolchain-*" -o -name "libgcc_s.so*" -o -name "*.toolchain*" \) -print 2>/dev/null || true; find build_dir -maxdepth 3 \( -path "*/toolchain*" -o -path "*/bpf-headers*" \) -print 2>/dev/null || true; echo "::endgroup::"' ERR
