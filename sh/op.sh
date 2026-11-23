@@ -245,6 +245,17 @@ git clone --depth=1 https://github.com/destan19/luci-app-harbor-file.git package
 ./scripts/feeds install -a
 
 # =========================================================
+# 【关键修复】删除 weechat（上游 Makefile 有递归依赖 bug）
+# 新版官方 feeds 引入了 weechat，其 Kconfig 存在
+# luci-app-weechat -> weechat-full -> weechat-minimal -> luci-app-weechat
+# 的循环依赖，会让 make defconfig / 内核 syncconfig 直接失败
+# （target/linux failed to build）。我们不用 weechat，直接从源码树删除。
+# 必须在 feeds install -a 之后删，否则会被重新装回。
+# =========================================================
+rm -rf feeds/packages/net/weechat feeds/luci/applications/luci-app-weechat
+echo "OK: 已删除 weechat（规避 Kconfig 递归依赖）"
+
+# =========================================================
 # 【关键修复】强制关闭 nginx（去 nginx，防冲突）
 # 原版默认启用了 luci-nginx，必须在这里关掉
 # =========================================================
