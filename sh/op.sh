@@ -38,6 +38,12 @@ git clone -b porxy --depth 1 --single-branch https://github.com/shiyu1314/openwr
 # daed：使用官方 runfiles，避免 CI 编译爆炸
 rm -rf package/porxy/daed package/porxy/luci-app-daed
 
+# mihomo-alpha/meta 存在 Kconfig 循环依赖（互相 depends on），
+# 会让内核 syncconfig 失败、target/linux failed to build。我们不用 mihomo，
+# 直接删掉（daede/daed 不受影响）。
+rm -rf package/porxy/mihomo-alpha package/porxy/mihomo-meta
+echo "OK: 已删除 mihomo（规避 Kconfig 递归依赖）"
+
 # 清理不需要的官方应用
 rm -rf feeds/luci/applications/{luci-app-dockerman,luci-app-samba4,luci-app-aria2,luci-app-diskman}
 rm -rf feeds/packages/net/{samba4,v2ray-geodata,mosdns,sing-box,aria2,ariang,adguardhome}
